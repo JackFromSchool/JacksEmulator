@@ -16,7 +16,7 @@ pub struct InteruptState {
     if_r: u8,
     /// # Master Interupt Enable Switch
     /// If this is true interupts are Enabled
-    master: bool,
+    pub master: bool,
 }
 
 impl crate::mmu::Memory for InteruptState {

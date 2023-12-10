@@ -211,4 +211,12 @@ impl MMU {
         le_combine(ls, ms)
     }
 
+    pub fn enable_interupts(&mut self) {
+        self.interupt.master = true;
+    }
+
+    pub fn disble_interupts(&mut self) {
+        self.interupt.master = false;
+    }
+
 }

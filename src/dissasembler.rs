@@ -2,6 +2,7 @@ use std::collections::hash_map::HashMap;
 use serde_json::{ Result, Value };
 
 
+
 /// Represents a register and whether or not it is a pointer to data instead of an actual register.
 /// Includes an optional operation to be done to the register value before its use
 pub struct RegisterData {
@@ -41,6 +42,7 @@ impl Register {
             _ => false,
         }
     }
+
     
 }
 
@@ -48,6 +50,14 @@ impl RegisterData {
     pub fn empty() -> Self {
         Self {
             register: Register::None,
+            pointer: false,
+            operation: None,
+        }
+    }
+    
+    pub fn from_reg(register: Register) -> Self {
+        Self {
+            register,
             pointer: false,
             operation: None,
         }
@@ -154,52 +164,52 @@ impl Flags {
 #[derive(enum_display::EnumDisplay)]
 /// Represents all possible instructions the gameboy can do and the data required for them to run
 pub enum Instruction {
-    NOP,
-    STOP,
-    HALT,
-    EI,
-    DI,
-    JR(Condition, i8),
-    LD(RegisterData, RegisterData),
+    NOP, // Done
+    STOP, // Done
+    HALT, // Done
+    EI, // Done
+    DI, // Done
+    JR(Condition, i8), // Done
+    LD(RegisterData, RegisterData), // Done
     LDH(RegisterData, RegisterData),
     /// Load instruction for LD HL, SP+i8
     LDASP,
-    INC(RegisterData),
-    DEC(RegisterData),
-    RLCA,
-    RLA,
-    RRCA,
-    RRA,
-    DAA,
-    SCF,
-    CPL,
-    CCF,
-    ADD(RegisterData, Option<RegisterData>),
-    SUB(RegisterData),
-    ADC(RegisterData),
-    SBC(RegisterData),
-    AND(RegisterData),
-    XOR(RegisterData),
-    OR(RegisterData),
-    CP(RegisterData),
-    RET(Condition),
+    INC(RegisterData), // Done
+    DEC(RegisterData), // Done
+    RLCA, // Done
+    RLA, // Done
+    RRCA, // Done
+    RRA, // Done
+    DAA, // Done
+    SCF, // Done
+    CPL, // Done
+    CCF, // Done
+    ADD(RegisterData, Option<RegisterData>), // Done
+    SUB(RegisterData), // Done
+    ADC(RegisterData), // Done
+    SBC(RegisterData), // Done
+    AND(RegisterData), // Done
+    XOR(RegisterData), // Done
+    OR(RegisterData), // Done
+    CP(RegisterData), // Done
+    RET(Condition), // Done
     CALL(Condition, RegisterData),
-    POP(RegisterData),
-    PUSH(RegisterData),
-    JP(Condition, RegisterData),
-    RETI,
-    RST(u8),
-    RLC(RegisterData),
-    RRC(RegisterData),
-    RL(RegisterData),
-    RR(RegisterData),
-    SLA(RegisterData),
-    SRA(RegisterData),
-    SWAP(RegisterData),
-    SRL(RegisterData),
-    BIT(u8, RegisterData),
-    RES(u8, RegisterData),
-    SET(u8, RegisterData),
+    POP(RegisterData), // Done
+    PUSH(RegisterData), // Done
+    JP(Condition, RegisterData), // Done
+    RETI, // Done
+    RST(u16),
+    RLC(RegisterData), // Done
+    RRC(RegisterData), // Done
+    RL(RegisterData), // Done
+    RR(RegisterData), // Done
+    SLA(RegisterData), // Done
+    SRA(RegisterData), // Done
+    SWAP(RegisterData), // Done
+    SRL(RegisterData), // Done
+    BIT(u8, RegisterData), // Done
+    RES(u8, RegisterData), // Done
+    SET(u8, RegisterData), // Done
     PREFIX,
 }
 
@@ -341,7 +351,7 @@ impl Dissasembler {
                     }
                 },
                 "RETI" => Instruction::RETI,
-                "RST" => Instruction::RST(u8::from_str_radix(&object["operands"][0].as_str().unwrap().replace("H", ""), 10).unwrap()),
+                "RST" => Instruction::RST(u16::from_str_radix(&object["operands"][0].as_str().unwrap().replace("H", ""), 10).unwrap()),
                 "LDH" => Instruction::LDH(
                     object["operands"][0].as_str().unwrap().into(),
                     object["operands"][1].as_str().unwrap().into(),

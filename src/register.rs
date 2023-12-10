@@ -104,6 +104,21 @@ impl Registers {
         self.f = self.f & FLAG_C_INV;
     }
     
+    /// Returns a bool based on if C flag is set
+    pub fn get_c(&mut self) -> bool {
+        (self.f & FLAG_C) == FLAG_C
+    }
+
+    /// Returns a bool based on if H flag is set
+    pub fn get_h(&mut self) -> bool {
+        (self.f & FLAG_H) == FLAG_H
+    }
+
+    /// Returns a bool based on if N flag is set
+    pub fn get_n(&mut self) -> bool {
+        (self.f & FLAG_N) == FLAG_N
+    }
+    
     /// Combines two u8's into one u16 where high is the most significant byte and low is the least
     /// significant byte
     fn combine(high: u8, low: u8) -> u16 {
