@@ -30,7 +30,7 @@ impl Cpu {
     }
 
 
-    pub fn tick(&mut self, d: &Dissasembler) -> u32 {
+    pub fn tick(&mut self, d: &Dissasembler) -> u8 {
         let code = &d.unprefixed[&self.mmu.read_8(self.registers.pc)];
         self.increment(RegisterData::from_reg(Register::PC));
         
@@ -41,8 +41,20 @@ impl Cpu {
         // TODO: Edge Cases
         match code.extra_data {
             Take::None => (),
-            Take::Eight => instruction = instruction.insert_r2(self.get_8()),
-            Take::Sixteen => instruction = instruction.insert_r2(self.get_16())
+            Take::Eight => {
+                if code.code == 0xE0 || code.code == 0xF8 {
+                    instruction = instruction.insert_r1(self.get_8());
+                } else {
+                    instruction = instruction.insert_r2(self.get_8());
+                }
+            },
+            Take::Sixteen => {
+                if code.code == 0x08 || code.code == 0xEA {
+                    instruction = instruction.insert_r1(self.get_16())
+                } else {
+                    instruction = instruction.insert_r2(self.get_16())
+                }
+            }
         }
         
         match instruction {
@@ -53,10 +65,10 @@ impl Cpu {
             Instruction::DI => self.disable_interupts(),
             Instruction::JR(c, by) => self.jump_relative(c, by),
             Instruction::LD(r1, r2) => self.load(r1, r2),
-            Instruction::LDH(_, _) => unimplemented!(),
-            Instruction::LDASP => unimplemented!(),
-            Instruction::LDINC(_, _) => unimplemented!(),
-            Instruction::LDDEC(_, _) => unimplemented!(),
+            Instruction::LDH(r1, r2) => self.load_high(r1, r2),
+            Instruction::LDASP(r) => self.load_hl_sp(r),
+            Instruction::LDINC(r1, r2) => self.load_incrememnt(r1, r2),
+            Instruction::LDDEC(r1, r2) => self.load_decrement(r1, r2),
             Instruction::INC(r) => self.increment(r),
             Instruction::DEC(r) => self.decrement(r),
             Instruction::RLCA => self.rotate_left_copy_a(),
@@ -110,6 +122,65 @@ impl Cpu {
         self.increment(RegisterData::from_reg(Register::PC));
         self.increment(RegisterData::from_reg(Register::PC));
         RegisterData::from_reg(Register::Const16(data))
+    }
+
+    pub fn load_incrememnt(&mut self, _r1: RegisterData, r2: RegisterData) {
+        if r2.register.is_16() {
+            let val = self.mmu.read_8(self.registers.get_hl().wrapping_add(1));
+
+            self.registers.a = val;
+        } else {
+            let val = self.registers.a;
+            
+            self.mmu.write_8(self.registers.get_hl().wrapping_add(1), val);
+        }
+    }
+
+    pub fn load_decrement(&mut self, _r1: RegisterData, r2: RegisterData) {
+        if r2.register.is_16() {
+            let val = self.mmu.read_8(self.registers.get_hl().wrapping_sub(1));
+
+            self.registers.a = val;
+        } else {
+            let val = self.registers.a;
+
+            self.mmu.write_8(self.registers.get_hl().wrapping_sub(1), val);
+        }
+    }
+
+    pub fn load_high(&mut self, r1: RegisterData, r2: RegisterData) {
+        if r2.register == Register::A {
+            let val = self.registers.a;
+
+            match r1.register {
+                Register::C => self.mmu.write_8(self.registers.c as u16 + 0xFF00, val),
+                Register::Const8(i) => self.mmu.write_8(i as u16 + 0xFF00, val),
+                _ => unreachable!()
+            }
+        } else {
+            let val = match r2.register {
+                Register::C => self.mmu.read_8(self.registers.c as u16 + 0xFF00),
+                Register::Const8(i) => self.mmu.read_8(i as u16 + 0xFF00),
+                _ => unreachable!()
+            };
+
+            self.registers.a = val;
+        }
+    }
+
+    pub fn load_hl_sp(&mut self, r: RegisterData) {
+        let val = match r.register {
+            Register::Const8(x) => x as i8 as i16,
+            _ => unreachable!()
+        };
+
+        self.registers.set_hl(self.mmu.read_16(self.registers.sp.wrapping_add_signed(val)));
+
+        let reg = &mut self.registers;
+        reg.unset_z();
+        reg.unset_n();
+        reg.set_h();
+        reg.set_c();
     }
 
     pub fn load(&mut self, r1: RegisterData, r2: RegisterData) {
@@ -1323,8 +1394,8 @@ impl Cpu {
 
     pub fn jump_relative(&mut self, c: Condition, by: RegisterData) {
         let val = match by.register { Register::Const8(x) => x, _ => unreachable!() };
-        let to = ((self.registers.pc as u32 as i32) + (val as i32)) as u16;
-        
+        let to = ((self.registers.pc as u32 as i32) + (val as i8 as i32)) as u16;
+
         match c {
             Condition::Always => {
                 self.registers.pc = to; 

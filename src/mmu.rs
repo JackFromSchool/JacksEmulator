@@ -211,6 +211,10 @@ impl MMU {
         le_combine(ls, ms)
     }
 
+    pub fn tick(&mut self, ticks: u8) {
+        self.timer.update_time(ticks);
+    }
+
     pub fn enable_interupts(&mut self) {
         self.interupt.master = true;
     }

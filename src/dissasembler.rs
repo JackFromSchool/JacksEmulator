@@ -165,7 +165,7 @@ pub enum Instruction {
     LD(RegisterData, RegisterData), // Done
     LDH(RegisterData, RegisterData),
     /// Load instruction for LD HL, SP+i8
-    LDASP,
+    LDASP(RegisterData),
     LDINC(RegisterData, RegisterData),
     LDDEC(RegisterData, RegisterData),
     INC(RegisterData), // Done
@@ -212,6 +212,7 @@ impl Instruction {
     pub fn insert_r2(&mut self, new: RegisterData) -> Instruction {
         match self {
             Self::LD(r1, _r2) => Self::LD(*r1, new),
+            Self::LDH(r1, _r2) => Self::LDH(*r1, new),
             Self::ADD(r1, _r2) => Self::ADD(*r1, new),
             Self::ADC(_r1, ) => Self::ADC(new),
             Self::SBC(_r1, ) => Self::SBC(new),
@@ -227,6 +228,8 @@ impl Instruction {
     pub fn insert_r1(&mut self, new: RegisterData) -> Instruction {
         match self {
             Self::LD(_r1, r2) => Self::LD(new, *r2),
+            Self::LDASP(_r1) => Self::LDASP(new),
+            Self::LDH(_r1, r2) => Self::LDH(new, *r2),
             _ => unreachable!()
         }
     }
@@ -241,6 +244,7 @@ pub enum Take {
 
 /// Represents and opcode and what must be done for it to run correctly and in time
 pub struct OpCode {
+    pub code: u8,
     pub instruction: Instruction,
     pub flags: Flags,
     pub cycles: u8,
@@ -299,7 +303,7 @@ impl Dissasembler {
                 3 => Take::Sixteen,
                 _ => unreachable!()
             };
-            
+
             // Instruction created here
             let instruction = match object["mnemonic"].as_str().unwrap() {
                 "NOP" => Instruction::NOP,
@@ -319,7 +323,7 @@ impl Dissasembler {
                 "DEC" => Instruction::DEC(object["operands"][0].as_str().unwrap().into()),
                 "LD" => {
                     if object["operands"][1].as_str().unwrap() == "SP+r8" {
-                        Instruction::LDASP
+                        Instruction::LDASP(RegisterData::empty())
                     } else {
                         Instruction::LD(
                             object["operands"][0].as_str().unwrap().into(),
@@ -410,6 +414,7 @@ impl Dissasembler {
             
             let code = u8::from_str_radix(&object["opcode"].as_str().unwrap().replace("0x", ""), 16).unwrap();
             let opcode = OpCode {
+                code,
                 instruction,
                 flags,
                 cycles,
