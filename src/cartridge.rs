@@ -62,11 +62,19 @@ impl Cartridge {
 impl crate::mmu::Memory for Cartridge {
     
     fn handle_write(&mut self, index: u16, val: u8) {
-        self.controller.write(index, val);
+        if (0..ROM_BANK_SIZE).contains(&(index as usize)) {
+            ()
+        } else {
+            self.controller.write(index, val);
+        }
     }
     
     fn handle_read(&self, index: u16) -> u8 {
-        self.controller.read(index)
+        if (0..ROM_BANK_SIZE).contains(&(index as usize)) {
+            self.fixed_rom[index as usize]
+        } else {
+            self.controller.read(index)
+        }
     }
     
 }

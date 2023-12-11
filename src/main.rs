@@ -6,9 +6,9 @@ fn main() {
     
     let d = Dissasembler::new().unwrap();
     
-    let cpu = Cpu::from_rom(include_bytes!("../roms/addition_test.rom").to_vec());
+    let mut cpu = Cpu::from_rom(include_bytes!("../roms/drMario.gb").to_vec());
 
     loop {
-        
+        cpu.tick(&d);
     }
 }

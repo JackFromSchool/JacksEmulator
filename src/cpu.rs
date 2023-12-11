@@ -1,6 +1,6 @@
 use crate::register::Registers;
 use crate::mmu::MMU;
-use crate::dissasembler::{ OpCode, RegisterData, Flags, Register, Condition, Instruction, Dissasembler };
+use crate::dissasembler::{ Take, RegisterData, Flags, Register, Condition, Instruction, Dissasembler };
 use crate::util::{ BitOperations, le_combine };
 
 pub struct Cpu {
@@ -32,8 +32,20 @@ impl Cpu {
 
     pub fn tick(&mut self, d: &Dissasembler) -> u32 {
         let code = &d.unprefixed[&self.mmu.read_8(self.registers.pc)];
+        self.increment(RegisterData::from_reg(Register::PC));
         
-        match code.instruction {
+        let mut instruction = code.instruction;
+        
+        log::debug!("Running: {instruction}");
+        
+        // TODO: Edge Cases
+        match code.extra_data {
+            Take::None => (),
+            Take::Eight => instruction = instruction.insert_r2(self.get_8()),
+            Take::Sixteen => instruction = instruction.insert_r2(self.get_16())
+        }
+        
+        match instruction {
             Instruction::NOP => (),
             Instruction::STOP => std::process::exit(0),
             Instruction::HALT => self.halt_cpu(),
@@ -43,6 +55,8 @@ impl Cpu {
             Instruction::LD(r1, r2) => self.load(r1, r2),
             Instruction::LDH(_, _) => unimplemented!(),
             Instruction::LDASP => unimplemented!(),
+            Instruction::LDINC(_, _) => unimplemented!(),
+            Instruction::LDDEC(_, _) => unimplemented!(),
             Instruction::INC(r) => self.increment(r),
             Instruction::DEC(r) => self.decrement(r),
             Instruction::RLCA => self.rotate_left_copy_a(),
@@ -53,7 +67,7 @@ impl Cpu {
             Instruction::SCF => self.set_carry_flag(),
             Instruction::CPL => self.complement_accumulator(),
             Instruction::CCF => self.complement_carry_flag(),
-            Instruction::ADD(_, _) => unimplemented!(),
+            Instruction::ADD(r1, r2) => self.add(r1, r2, code.flags),
             Instruction::SUB(r) => self.subtract(r),
             Instruction::ADC(r) => self.add_carry(r),
             Instruction::SBC(r) => self.subtract_carry(r),
@@ -85,6 +99,19 @@ impl Cpu {
         code.cycles.into()
     }
 
+    pub fn get_8(&mut self) -> RegisterData {
+        let data = self.mmu.read_8(self.registers.pc);
+        self.increment(RegisterData::from_reg(Register::PC));
+        RegisterData::from_reg(Register::Const8(data))
+    }
+
+    pub fn get_16(&mut self) -> RegisterData {
+        let data = self.mmu.read_16(self.registers.pc);
+        self.increment(RegisterData::from_reg(Register::PC));
+        self.increment(RegisterData::from_reg(Register::PC));
+        RegisterData::from_reg(Register::Const16(data))
+    }
+
     pub fn load(&mut self, r1: RegisterData, r2: RegisterData) {
         if r2.register.is_16() && !r2.pointer {
             let mut val = match r2.register {
@@ -97,10 +124,6 @@ impl Cpu {
                 Register::Const16(x) => x,
                 _ => unreachable!("u16 values are handled here not a {}", r2.register)
             };
-
-            if let Some(func) = r2.operation {
-                val = func(val);
-            }
 
             if r2.pointer {
                 val = self.mmu.read_16(val);
@@ -117,10 +140,6 @@ impl Cpu {
                     Register::Const16(x) => x,
                     _ => unreachable!("All u16 values are handled here not a {}", r1.register)
                 };
-
-                if let Some(func) = r1.operation {
-                    index = func(index);
-                }
 
                 self.mmu.write_16(index, val);
             } else {
@@ -158,10 +177,6 @@ impl Cpu {
                         _ => unreachable!("Handled in outer match")
                     };
 
-                    if let Some(func) = r2.operation  {
-                        index = func(index);
-                    }
-
                     self.mmu.read_8(index)
                 }
             };
@@ -186,10 +201,6 @@ impl Cpu {
                         Register::Const16(x) => x,
                         _ => unreachable!("Handled in outer match")
                     };
-
-                    if let Some(func) = r1.operation  {
-                        index = func(index);
-                    }
 
                     self.mmu.write_8(index, val);
                 }
@@ -239,16 +250,43 @@ impl Cpu {
             let og = self.registers.sp;
             
             let add = match r2.register {
-                Register::Const8(x) => x as i16,
+                Register::Const8(x) => x as i8 as i16,
                 _ => unreachable!()
             };
 
-            let (sum, overflow) = og.overflowing_add_signed(add);
+            let sum = og.wrapping_add_signed(add);
             let reg = &mut self.registers;
             
-            // TODO: Figure out other flags
             reg.unset_z();
             reg.unset_n();
+            
+            // Flags may be incorrect but they are usesless so who cares
+            let cast = og as i16;
+            if add < 0 {
+                if (cast & 0xFF) < (-add & 0xFF) {
+                    reg.set_c();
+                } else {
+                    reg.unset_c();
+                }
+
+                if (cast & 0xF) < (-add & 0xF) {
+                    reg.set_h();
+                } else {
+                    reg.unset_h();
+                }
+            } else {
+                if (cast & 0xFF) + (add & 0xFF) > 0xFF {
+                    reg.set_c();
+                } else {
+                    reg.unset_c();
+                }
+
+                if (cast & 0xF) + (add & 0xF) > 0xF {
+                    reg.set_h();
+                } else {
+                    reg.unset_h();
+                }
+            }
 
             reg.sp = sum;
             
@@ -390,7 +428,7 @@ impl Cpu {
             reg.unset_c();
         }
 
-        if (a & 0xF) < (sub &0xF) {
+        if (a & 0xF) < (sub & 0xF) {
             reg.set_h();
         } else {
             reg.unset_c();
@@ -498,6 +536,7 @@ impl Cpu {
                 Register::DE => reg.set_de(reg.get_de().wrapping_add(1)),
                 Register::HL => reg.set_hl(reg.get_hl().wrapping_add(1)),
                 Register::SP => reg.sp = reg.sp.wrapping_add(1),
+                Register::PC => reg.pc = reg.pc.wrapping_add(1),
                 _ => unreachable!()
             };
         } else {
@@ -1282,8 +1321,9 @@ impl Cpu {
         };
     }
 
-    pub fn jump_relative(&mut self, c: Condition, by: i8) {
-        let to = ((self.registers.pc as u32 as i32) + (by as i32)) as u16;
+    pub fn jump_relative(&mut self, c: Condition, by: RegisterData) {
+        let val = match by.register { Register::Const8(x) => x, _ => unreachable!() };
+        let to = ((self.registers.pc as u32 as i32) + (val as i32)) as u16;
         
         match c {
             Condition::Always => {

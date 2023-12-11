@@ -1,17 +1,17 @@
 use std::collections::hash_map::HashMap;
 use serde_json::{ Result, Value };
+use crate::cpu::Cpu;
 
 
-
+#[derive(Clone, Copy)]
 /// Represents a register and whether or not it is a pointer to data instead of an actual register.
 /// Includes an optional operation to be done to the register value before its use
 pub struct RegisterData {
     pub register: Register,
     pub pointer: bool,
-    pub operation: Option<Box<dyn Fn(u16) -> u16>>,
 }
 
-#[derive(enum_display::EnumDisplay, PartialEq, Eq)]
+#[derive(enum_display::EnumDisplay, PartialEq, Eq, Clone, Copy)]
 /// Each register that might be used for an instruction and constant values should they be used
 /// instead
 pub enum Register {
@@ -51,7 +51,6 @@ impl RegisterData {
         Self {
             register: Register::None,
             pointer: false,
-            operation: None,
         }
     }
     
@@ -59,7 +58,6 @@ impl RegisterData {
         Self {
             register,
             pointer: false,
-            operation: None,
         }
     }
 }
@@ -70,13 +68,6 @@ impl std::convert::From<&str> for RegisterData {
         let mut pointer = false;
         if value.contains("(") {
             pointer = true;
-        }
-
-        let mut operation: Option<Box<dyn Fn(u16) -> u16>> = None;
-        if value.contains("-") {
-            operation = Some(Box::new(|x| x+1));
-        } else if value.contains("+") {
-            operation = Some(Box::new(|x| x-1));
         }
 
         let register = match value
@@ -108,11 +99,11 @@ impl std::convert::From<&str> for RegisterData {
         Self {
             register,
             pointer,
-            operation,
         }
     }
 }
 
+#[derive(Clone, Copy)]
 /// Conditions that must be checked for certain instructions
 pub enum Condition {
     NZ,
@@ -134,6 +125,7 @@ impl std::convert::From<&str> for Condition {
     }
 }
 
+#[derive(Clone, Copy)]
 /// # Flags stores each flag as an Option<(bool, bool)>
 /// If the flag contains a none then it is not affected by a subsuquent call to an instruction
 ///
@@ -161,7 +153,7 @@ impl Flags {
 
 }
 
-#[derive(enum_display::EnumDisplay)]
+#[derive(enum_display::EnumDisplay, Clone, Copy)]
 /// Represents all possible instructions the gameboy can do and the data required for them to run
 pub enum Instruction {
     NOP, // Done
@@ -169,11 +161,13 @@ pub enum Instruction {
     HALT, // Done
     EI, // Done
     DI, // Done
-    JR(Condition, i8), // Done
+    JR(Condition, RegisterData), // Done
     LD(RegisterData, RegisterData), // Done
     LDH(RegisterData, RegisterData),
     /// Load instruction for LD HL, SP+i8
     LDASP,
+    LDINC(RegisterData, RegisterData),
+    LDDEC(RegisterData, RegisterData),
     INC(RegisterData), // Done
     DEC(RegisterData), // Done
     RLCA, // Done
@@ -184,7 +178,7 @@ pub enum Instruction {
     SCF, // Done
     CPL, // Done
     CCF, // Done
-    ADD(RegisterData, Option<RegisterData>), // Done
+    ADD(RegisterData, RegisterData), // Done
     SUB(RegisterData), // Done
     ADC(RegisterData), // Done
     SBC(RegisterData), // Done
@@ -213,12 +207,44 @@ pub enum Instruction {
     PREFIX,
 }
 
+impl Instruction {
+
+    pub fn insert_r2(&mut self, new: RegisterData) -> Instruction {
+        match self {
+            Self::LD(r1, _r2) => Self::LD(*r1, new),
+            Self::ADD(r1, _r2) => Self::ADD(*r1, new),
+            Self::ADC(_r1, ) => Self::ADC(new),
+            Self::SBC(_r1, ) => Self::SBC(new),
+            Self::XOR(_r1, ) => Self::XOR(new),
+            Self::CP(_r1, ) => Self::CP(new),
+            Self::JR(c, _r2) => Self::JR(*c, new),
+            Self::JP(c, _r2) => Self::JP(*c, new),
+            Self::CALL(c, _r2) => Self::CALL(*c, new),
+            _ => unreachable!()
+        }
+    }
+    
+    pub fn insert_r1(&mut self, new: RegisterData) -> Instruction {
+        match self {
+            Self::LD(_r1, r2) => Self::LD(new, *r2),
+            _ => unreachable!()
+        }
+    }
+    
+}
+
+pub enum Take {
+    None,
+    Eight,
+    Sixteen,
+}
+
 /// Represents and opcode and what must be done for it to run correctly and in time
 pub struct OpCode {
     pub instruction: Instruction,
     pub flags: Flags,
     pub cycles: u8,
-    pub extra_data: Option<Box<dyn FnMut() -> Register>>,
+    pub extra_data: Take,
 }
 
 /// Holds two HashMaps that take in opcode numeric values and return the OpCode
@@ -266,10 +292,11 @@ impl Dissasembler {
             
             // Define if extra data is needed
             let bytes = object["bytes"].as_u64().unwrap();
-            let extra_data: Option<Box<dyn FnMut() -> Register>>  = match bytes {
-                1 => None,
-                2 => Some(Box::new(Self::get_8)),
-                3 => Some(Box::new(Self::get_16)),
+            let extra_data = match bytes {
+                1 => Take::None,
+                2 if object.get("prefix").is_none() => Take::Eight,
+                2 => Take::None,
+                3 => Take::Sixteen,
                 _ => unreachable!()
             };
             
@@ -300,27 +327,28 @@ impl Dissasembler {
                         )
                     }
                 }
+                "LDINC" => Instruction::LDINC(
+                    object["operands"][0].as_str().unwrap().into(),
+                    object["operands"][1].as_str().unwrap().into(),
+                ),
+                "LDDEC" => Instruction::LDDEC(
+                    object["operands"][0].as_str().unwrap().into(),
+                    object["operands"][1].as_str().unwrap().into(),
+                ),
                 "JR" => {
                     if Self::is_const(object["operands"][0].as_str().unwrap()).0 {
-                        Instruction::JR(Condition::Always, 0)
+                        Instruction::JR(Condition::Always, RegisterData::from_reg(Register::Const8(0)))
                     } else {
-                        Instruction::JR(object["operands"][0].as_str().unwrap().into(), 0)
+                        Instruction::JR(object["operands"][0].as_str().unwrap().into(), RegisterData::from_reg(Register::Const8(0)))
                     }
                 }
-                "ADD" => {
-                    if match object["opcode"].as_str().unwrap()
-                    { "0x09" | "0x19" | "0x29" | "0x39" => true, _ => false } {
-                        Instruction::ADD(
-                            object["operands"][0].as_str().unwrap().into(),
-                            Some(object["operands"][1].as_str().unwrap().into()),
-                        )
-                    } else {
-                        Instruction::ADD(object["operands"][0].as_str().unwrap().into(), None)
-                    }
-                },
+                "ADD" => Instruction::ADD(
+                    object["operands"][0].as_str().unwrap().into(),
+                    object["operands"][1].as_str().unwrap().into(),
+                ),
                 "SUB" => Instruction::SUB(object["operands"][0].as_str().unwrap().into()),
-                "ADC" => Instruction::ADC(object["operands"][0].as_str().unwrap().into()),
-                "SBC" => Instruction::SBC(object["operands"][0].as_str().unwrap().into()),
+                "ADC" => Instruction::ADC(object["operands"][1].as_str().unwrap().into()),
+                "SBC" => Instruction::SBC(object["operands"][1].as_str().unwrap().into()),
                 "AND" => Instruction::AND(object["operands"][0].as_str().unwrap().into()),
                 "XOR" => Instruction::XOR(object["operands"][0].as_str().unwrap().into()),
                 "OR" => Instruction::OR(object["operands"][0].as_str().unwrap().into()),
@@ -420,14 +448,6 @@ impl Dissasembler {
             "d8" | "r8" | "a8" => (true, Register::Const8(0)),
             _ => (false, Register::None),
         }
-    }
-
-    fn get_8() -> Register {
-        todo!()
-    }
-
-    fn get_16() -> Register {
-        todo!()
     }
 
 }

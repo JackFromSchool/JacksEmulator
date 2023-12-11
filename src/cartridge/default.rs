@@ -22,7 +22,7 @@ impl MemController for NoMbc {
         match index {
             0x4000..=0x7FFF => self.rom[(index - 0x4000) as usize],
             0xA000..=0xBFFF => self.ram[(index - 0xA000) as usize],
-            _ => unreachable!(),
+            _ => unreachable!("{}", index),
         }
     }
 
