@@ -2,6 +2,7 @@ use crate::register::Registers;
 use crate::mmu::MMU;
 use crate::dissasembler::{ Take, RegisterData, Flags, Register, Condition, Instruction, Dissasembler };
 use crate::util::{ BitOperations, le_combine };
+use crate::interupts::Interupt;
 
 pub struct Cpu {
     pub registers: Registers,
@@ -1359,6 +1360,25 @@ impl Cpu {
 
     pub fn disable_interupts(&mut self) {
         self.mmu.disble_interupts();
+    }
+
+    pub fn service_interupts(&mut self, interupt: Interupt) -> u8 {
+        if interupt == Interupt::None || interupt == Interupt::Serial {
+            return 0;
+        }
+
+        let goto = match interupt {
+            Interupt::VBlank => 0x40,
+            Interupt::LCD => 0x48,
+            Interupt::Timer => 0x50,
+            Interupt::Joypad => 0x60,
+            _ => unreachable!()
+        };
+
+        self.push(RegisterData::from_reg(Register::PC));
+        self.registers.pc = goto;
+        
+        20
     }
 
     pub fn halt_cpu(&mut self) {

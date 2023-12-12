@@ -66,12 +66,14 @@ fn main() {
 
             while cycles < MAX_CYCLES {
                 for event in event_receiver.try_iter() {
+                    cpu.mmu.joypad.update_state(event);
                 }
             
                 let tick_cycles = cpu.tick(&d);
                 cycles += tick_cycles as u64;
 
-                cpu.mmu.tick(tick_cycles);
+                let interupt_request = cpu.mmu.tick(tick_cycles);
+                cycles += cpu.service_interupts(interupt_request) as u64;
             }
 
             'here: loop {
@@ -106,7 +108,9 @@ fn main() {
                                 _ => ButtonEvent::None,
                             };
                             
-                            event_sender.send(ButtonEventWrapper { event, new_state: input.state }).unwrap();
+                            if !event.is_none() {
+                                event_sender.send(ButtonEventWrapper { event, new_state: input.state }).unwrap();
+                            }
                         }
                     }
                     _ => ()

@@ -66,7 +66,7 @@ pub struct MMU {
     gpu: crate::gpu::GPU,
     timer: crate::timer::Timer,
     interupt: crate::interupts::InteruptState,
-    joypad: crate::joypad::Joypad,
+    pub joypad: crate::joypad::Joypad,
     apu: crate::apu::APU,
     cartridge: crate::cartridge::Cartridge,
     wram: [u8; WRAM_SIZE],
@@ -211,8 +211,16 @@ impl MMU {
         le_combine(ls, ms)
     }
 
-    pub fn tick(&mut self, ticks: u8) {
-        self.timer.update_time(ticks);
+    pub fn tick(&mut self, ticks: u8) -> crate::interupts::Interupt {
+        let mut interupts = 0;
+        
+        interupts |= self.timer.update_time(ticks);
+        if self.joypad.interupt_possible {
+            interupts |= 0b0001_0000;
+        }
+
+        self.interupt.update_interupts(interupts);
+        self.interupt.do_interupts()
     }
 
     pub fn enable_interupts(&mut self) {
