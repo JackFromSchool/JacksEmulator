@@ -20,5 +20,5 @@ impl BitOperations for u16 {
 /// Combines a least significant bit with most significant in little endian encoding. Pass in
 /// lsBit first and then msBit
 pub fn le_combine(ls: u8, ms: u8) -> u16 {
-    ((ms as u16) << 8) + (ls as u16)
+    ((ms as u16) << 8) | (ls as u16)
 }

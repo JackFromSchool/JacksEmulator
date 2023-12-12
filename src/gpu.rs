@@ -2,7 +2,7 @@ use crate::mmu::{
     VRAM_START, VRAM_END, OAM_START, OAM_END,
 };
 
-use std::sync::{ Arc, Mutex };
+use std::sync::{ Arc, Mutex, MutexGuard};
 
 /// Location in memory where the current scanline is stored (read-only)
 const CURR_SCANLINE_LOC: u16 = 0xFF44;
@@ -109,7 +109,7 @@ impl GPU {
             self.ticks_on_line = 0;
             
             if self.current_scanline < 144 {
-                //self.draw_scan_line(shared_array);
+                self.draw_scan_line(shared_array);
             }
            
             self.current_scanline += 1;
@@ -185,30 +185,31 @@ impl GPU {
         interupt
     }
 
-    fn draw_scan_line(&mut self) {
+    fn draw_scan_line(&mut self, shared_array: &MutexPixels) {
         let control = self.lcd_control;
 
         if (control & 0b0000_0001) == 0b0000_0001 {
-            self.render_tiles()
+            self.render_tiles(shared_array);
         }
 
         if (control & 0b0000_0010) == 0b0000_0010 {
-            self.render_sprites()
+            //self.render_sprites()
         }
     }
 
-    fn render_tiles(&mut self) {
+    fn render_tiles(&mut self, shared_array: &MutexPixels) {
+        let mut locked_array = shared_array.lock().unwrap();
         let control = self.lcd_control;
 
         let sy = self.scroll_y;
         let sx = self.scroll_x;
         let wy = self.window_y;
-        let wx = self.window_x;
+        let wx = self.window_x.wrapping_sub(7);
         
-        let tile_data_start = if (control & 0b0001_0000) == 0b0001_0000 {
-            0x8800 // Unsigned Look-up
+        let (tile_data_start, signed) = if (control & 0b0001_0000) == 0b0001_0000 {
+            (0x8800, true) 
         } else {
-            0x8000 // Signed Look-up
+            (0x8000, false) 
         };
 
 
@@ -241,12 +242,95 @@ impl GPU {
             self.current_scanline - wy
         };
 
-        let tile_row = ( y_pos/8)*32;
+        let tile_row: u16 = ((y_pos as u16)/8)*32;
+
+        for pixel in 0..160 {
+            let mut x_pos = pixel+self.scroll_x;
+
+            if window {
+                if pixel >= wx {
+                    x_pos = pixel - wx
+                }
+            }
+
+            let tile_col = x_pos/8;
+
+            let tile_address = bg_layout_start as u16 + tile_row as u16 + tile_col as u16;
+            
+            let tile_num = self.vram[(tile_address - VRAM_START) as usize] as u16;
+
+            let mut tile_location: u16 = tile_data_start;
+
+            if signed {
+                tile_location += tile_num * 16;
+            } else {
+                tile_location += (tile_num + 128) * 16;
+            }
+
+            let mut line: u16 = (y_pos as u16) % 8;
+            line *= 2;
+            let data1 = self.vram[((tile_location + line) - VRAM_START) as usize];
+            let data2 = self.vram[((tile_location + line + 1) - VRAM_START) as usize];
+
+            let mut color_bit = (x_pos as i32) % 8;
+            color_bit -= 7;
+            color_bit *= -1;
+
+            let mut color_num = Self::get_bit_val(data2, color_bit as u32);
+            color_num <<= 1;
+            color_num |= Self::get_bit_val(data1, color_bit as u32);
+            
+            let color = match color_num {
+                0 => self.bg_palatte & 0b0000_0011,
+                1 => (self.bg_palatte & 0b0000_1100) >> 2,
+                2 => (self.bg_palatte & 0b0011_0000) >> 4,
+                3 => (self.bg_palatte & 0b1100_0000) >> 6,
+                _ => unreachable!()
+            };
+
+            let color_pixel = match color {
+                0 => ColorPixel {
+                    r: 155,
+                    g: 188,
+                    b: 15,
+                    a: 255,
+                },
+                1 => ColorPixel {
+                    r: 139,
+                    g: 172,
+                    b: 15,
+                    a: 255,
+                },
+                2 => ColorPixel {
+                    r: 48,
+                    g: 98,
+                    b: 48,
+                    a: 255
+                },
+                3 => ColorPixel {
+                    r: 15,
+                    g: 56,
+                    b: 15,
+                    a: 255
+                },
+                _ => unreachable!()
+            };
+
+            locked_array[self.current_scanline as usize][pixel as usize] = color_pixel;
+        }
 
     }
 
     fn render_sprites(&mut self) {
         todo!()
+    }
+
+    fn get_bit_val(byte: u8, index: u32) -> u8 {
+        if byte & (2u8.pow(index)) == byte & (2u8.pow(index)) {
+            1
+        } else {
+            0
+        }
     }
     
 }

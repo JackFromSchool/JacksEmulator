@@ -66,7 +66,7 @@ impl Registers {
     
     /// Sets the Z flag
     pub fn set_z(&mut self) {
-        self.f = self.f & FLAG_Z_INV + FLAG_Z;
+        self.f = (self.f & FLAG_Z_INV) | FLAG_Z;
     }
     
     /// Unsets the Z flag
@@ -76,7 +76,7 @@ impl Registers {
     
     /// Sets the N flag
     pub fn set_n(&mut self) {
-        self.f = self.f & FLAG_N_INV + FLAG_N;
+        self.f = (self.f & FLAG_N_INV) | FLAG_N;
     }
     
     /// Unsets the N flag
@@ -86,7 +86,7 @@ impl Registers {
     
     /// Sets the H flag
     pub fn set_h(&mut self) {
-        self.f = self.f & FLAG_H_INV + FLAG_H;
+        self.f = (self.f & FLAG_H_INV) | FLAG_H;
     }
     
     /// Unsets the H flag
@@ -96,7 +96,7 @@ impl Registers {
     
     /// Sets the C flag
     pub fn set_c(&mut self) {
-        self.f = self.f & FLAG_C_INV + FLAG_C;
+        self.f = (self.f & FLAG_C_INV) | FLAG_C;
     }
     
     /// Unsets the C flag
@@ -118,16 +118,20 @@ impl Registers {
     pub fn get_n(&mut self) -> bool {
         (self.f & FLAG_N) == FLAG_N
     }
+
+    pub fn get_z(&mut self) -> bool {
+        (self.f & FLAG_Z) == FLAG_Z
+    }
     
     /// Combines two u8's into one u16 where high is the most significant byte and low is the least
     /// significant byte
     fn combine(high: u8, low: u8) -> u16 {
-        ((high as u16) << 4) + (low as u16)
+        ((high as u16) << 8) | (low as u16)
     }
     
     /// Splits a u16 into two u8's where position 0 in the tuple is the most significant byte and
     /// position 1 is the least significant byte
     fn split(num: u16) -> (u8, u8) {
-        (((num & 0b1111_0000) >> 4) as u8, (num & 0b0000_1111) as u8)
+        (((num & 0xFF00) >> 8) as u8, (num & 0xFF) as u8)
     }
 }

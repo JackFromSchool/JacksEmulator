@@ -20,24 +20,32 @@ impl Cpu {
         };
 
         // Cpu defaults
-        cpu.registers.pc = 0x100;
+        /*
+        cpu.registers.pc = 0;
         cpu.registers.set_af(0x01B0);
         cpu.registers.set_bc(0x0013);
         cpu.registers.set_de(0x00D8);
         cpu.registers.set_hl(0x014D);
         cpu.registers.sp = 0xFFFE;
+        */
 
         cpu
     }
 
 
     pub fn tick(&mut self, d: &Dissasembler) -> u8 {
-        let code = &d.unprefixed[&self.mmu.read_8(self.registers.pc)];
+        let mut code = &d.unprefixed[&self.mmu.read_8(self.registers.pc)];
         self.increment(RegisterData::from_reg(Register::PC));
+
+        if matches!(code.instruction, Instruction::PREFIX) {
+           code = &d.prefixed[&self.mmu.read_8(self.registers.pc)];
+           self.increment(RegisterData::from_reg(Register::PC));
+        }
         
         let mut instruction = code.instruction;
         
-        log::debug!("Running: {instruction}");
+        //log::debug!("Running: {instruction}");
+        println!("Running: {}", instruction);
         
         // TODO: Edge Cases
         match code.extra_data {
@@ -127,25 +135,29 @@ impl Cpu {
 
     pub fn load_incrememnt(&mut self, _r1: RegisterData, r2: RegisterData) {
         if r2.register.is_16() {
-            let val = self.mmu.read_8(self.registers.get_hl().wrapping_add(1));
+            self.registers.set_hl(self.registers.get_hl().wrapping_add(1));
+            let val = self.mmu.read_8(self.registers.get_hl());
 
             self.registers.a = val;
         } else {
             let val = self.registers.a;
             
-            self.mmu.write_8(self.registers.get_hl().wrapping_add(1), val);
+            self.registers.set_hl(self.registers.get_hl().wrapping_add(1));
+            self.mmu.write_8(self.registers.get_hl(), val);
         }
     }
 
     pub fn load_decrement(&mut self, _r1: RegisterData, r2: RegisterData) {
         if r2.register.is_16() {
-            let val = self.mmu.read_8(self.registers.get_hl().wrapping_sub(1));
+            self.registers.set_hl(self.registers.get_hl().wrapping_sub(1));
+            let val = self.mmu.read_8(self.registers.get_hl());
 
             self.registers.a = val;
         } else {
             let val = self.registers.a;
 
-            self.mmu.write_8(self.registers.get_hl().wrapping_sub(1), val);
+            self.registers.set_hl(self.registers.get_hl().wrapping_sub(1));
+            self.mmu.write_8(self.registers.get_hl(), val);
         }
     }
 
@@ -196,6 +208,7 @@ impl Cpu {
                 Register::Const16(x) => x,
                 _ => unreachable!("u16 values are handled here not a {}", r2.register)
             };
+
 
             if r2.pointer {
                 val = self.mmu.read_16(val);
@@ -1288,14 +1301,17 @@ impl Cpu {
         let reg = &mut self.registers;
         let binary: u8 = 2u8.pow(bit as u32);
 
+        println!("binary: {:b}, val: {:b}", binary, val);
+
         reg.unset_n();
         reg.set_h();
 
         if (val & binary) == binary {
-            reg.set_z();
-        } else {
             reg.unset_z();
+        } else {
+            reg.set_z();
         }
+
     }
 
     pub fn reset_bit(&mut self, bit: u8, r: RegisterData) {
@@ -1424,6 +1440,7 @@ impl Cpu {
                 self.registers.pc = to; 
             },
             Condition::NZ if !self.registers.get_n() => {
+                println!("jumped");
                 self.registers.pc = to; 
             },
             Condition::C if self.registers.get_c() => {
