@@ -1,7 +1,8 @@
-
 use crate::mmu::{
     VRAM_START, VRAM_END, OAM_START, OAM_END,
 };
+
+use std::sync::{ Arc, Mutex };
 
 /// Location in memory where the current scanline is stored (read-only)
 const CURR_SCANLINE_LOC: u16 = 0xFF44;
@@ -30,6 +31,18 @@ const DMA_TRANSFER_LOC: u16 = 0xFF46;
 
 const SPRITE_TABLE_SIZE: usize = 0xA0;
 const VRAM_SIZE: usize = 0x1FFF;
+
+const HBLANK_PERIOD: u64 = 204+172+80;
+const DRAW_PERIOD: u64 = 172+80;
+const OAM_PERIOD: u64 = 80;
+
+#[derive(Default, Clone, Copy)]
+pub struct ColorPixel {
+    pub r: u8,
+    pub g: u8,
+    pub b: u8,
+    pub a: u8,
+}
 
 #[derive(PartialEq, Eq)]
 enum Mode {
@@ -70,10 +83,172 @@ pub struct GPU {
     /// The RAM data for the object palette data register 1
     obj_palette1: u8,
     /// The RAM data for the DMA transfer register
-    dma_transfer: u8,
+    pub dma_transfer: u8,
 
     // Internal State
     mode: Mode,
+    ticks_on_line: u64,
+    
+    inner_ray: [[ColorPixel; 160]; 144],
+}
+
+type MutexPixels = Arc<Mutex<[[ColorPixel; 160]; 144]>>;
+
+impl GPU {
+    
+    pub fn update_graphics(&mut self, ticks: u8, shared_array: &MutexPixels) -> u8 {
+        let interupt = self.set_status();
+        
+        if (self.lcd_control & 0b1000_0000) == 0b1000_0000 {
+            self.ticks_on_line += ticks as u64;
+        } else {
+            return 0;
+        }
+
+        if self.ticks_on_line >= 456 {
+            self.ticks_on_line = 0;
+            
+            if self.current_scanline < 144 {
+                //self.draw_scan_line(shared_array);
+            }
+           
+            self.current_scanline += 1;
+
+            if self.current_scanline > 153 {
+                self.current_scanline = 0;
+            }
+
+        }
+
+        interupt
+    }
+
+    fn set_status(&mut self) -> u8 {
+        let mut interupt = 0;
+        let mut req_interupt = false;
+        let status = self.lcd_status;
+
+        if (self.lcd_control & 0b1000_0000) != 0b1000_0000 {
+            self.current_scanline = 0;
+            self.lcd_status = (status & 0b1111_1100) | 1;
+            return 0;
+        }
+        
+        let current_mode: Mode;
+
+        if self.current_scanline >= 144 {
+            
+            current_mode = Mode::VBlank;
+            self.lcd_status = (status & 0b1111_1100) | 0b0000_0001;
+            if (self.lcd_status & 0b0001_0000) == 0b0001_0000 {
+                req_interupt = true;
+            }
+            
+        } else {
+            match self.ticks_on_line {
+                0..=OAM_PERIOD => {
+                    current_mode = Mode::OAMScan;
+                    
+                    self.lcd_status = (status & 0b1111_1100) | 0b0000_0010;
+                    if (self.lcd_status & 0b0010_0000) == 0b0010_0000 {
+                        req_interupt = true;
+                    }
+                },
+                81..=DRAW_PERIOD => {
+                    current_mode = Mode::Draw;
+                    
+                    self.lcd_status = (status & 0b1111_1100) | 0b0000_0011;
+                },
+                _ => {
+                    current_mode = Mode::HBlank;
+                    
+                    self.lcd_status = status & 0b1111_1100;
+                    if (self.lcd_status & 0b0000_1000) == 0b0000_1000 {
+                        req_interupt = true;
+                    }
+                },
+            }
+        }
+
+        if req_interupt && self.mode != current_mode {
+            interupt |= 0b0000_0010;
+        }
+
+        if self.current_scanline == self.compare {
+            self.lcd_status = (status & 0b1111_1011) | 0b0000_0100;
+            interupt |= 0b0000_0100;
+        } else {
+            self.lcd_status &= 0b1111_1011;
+        }
+
+
+        interupt
+    }
+
+    fn draw_scan_line(&mut self) {
+        let control = self.lcd_control;
+
+        if (control & 0b0000_0001) == 0b0000_0001 {
+            self.render_tiles()
+        }
+
+        if (control & 0b0000_0010) == 0b0000_0010 {
+            self.render_sprites()
+        }
+    }
+
+    fn render_tiles(&mut self) {
+        let control = self.lcd_control;
+
+        let sy = self.scroll_y;
+        let sx = self.scroll_x;
+        let wy = self.window_y;
+        let wx = self.window_x;
+        
+        let tile_data_start = if (control & 0b0001_0000) == 0b0001_0000 {
+            0x8800 // Unsigned Look-up
+        } else {
+            0x8000 // Signed Look-up
+        };
+
+
+        let mut window = false;
+
+        if (control & 0b0010_0000) == 0b0010_0000 {
+            if wy <= self.current_scanline {
+                window = true;
+            }
+        }
+
+        let bg_layout_start = if !window {
+            if (control & 0b0000_1000) == 0b0000_1000 {
+                0x9C00
+            } else {
+                0x9800
+            }
+        } else {
+            if (control & 0b0100_0000) == 0b0100_0000 {
+                0x9C00
+            } else {
+                0x9800
+            }
+        };
+
+
+        let y_pos = if !window {
+            sy + self.current_scanline
+        } else {
+            self.current_scanline - wy
+        };
+
+        let tile_row = ( y_pos/8)*32;
+
+    }
+
+    fn render_sprites(&mut self) {
+        todo!()
+    }
+    
 }
 
 impl Default for GPU {
@@ -94,6 +269,8 @@ impl Default for GPU {
             dma_transfer: 0,
             compare: 0,
             lcd_status: 0,
+            ticks_on_line: 0,
+            inner_ray: [[ColorPixel::default(); 160]; 144],
         }
     }
 }
@@ -144,7 +321,7 @@ impl crate::mmu::Memory for GPU {
                     self.sprite_ram[(index - OAM_START) as usize] = val;
                 }
             },
-            CURR_SCANLINE_LOC => self.current_scanline = val,
+            CURR_SCANLINE_LOC => self.current_scanline = 0,
             COMPARE_LOC => self.compare = val,
             LCD_STATUS_LOC => self.lcd_status = val,
             LCD_CONTROL_LOC => self.lcd_control = val,
@@ -159,7 +336,5 @@ impl crate::mmu::Memory for GPU {
             _ => unreachable!("Accessing memory that is not handled by gpu")
         }
     }
-    
+
 }
-
-

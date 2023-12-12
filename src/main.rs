@@ -1,6 +1,7 @@
 use JEmulator::dissasembler::Dissasembler;
 use JEmulator::cpu::Cpu;
 use JEmulator::joypad::{ ButtonEvent, ButtonEventWrapper };
+use JEmulator::gpu::ColorPixel;
 
 use std::time::Instant;
 use std::sync::{ Arc, Mutex };
@@ -19,14 +20,6 @@ const MAX_CYCLES: u64 = 69905;
 const WIDTH: u32 = 160;
 const HEIGHT: u32 = 144;
 const PIXEL_SIZE: u32 = 2;
-
-#[derive(Default, Clone, Copy)]
-pub struct ColorPixel {
-    pub r: u8,
-    pub g: u8,
-    pub b: u8,
-    pub a: u8,
-}
 
 fn main() {
     env_logger::Builder::from_env(env_logger::Env::new().filter_or("", "info")).init();
@@ -72,7 +65,7 @@ fn main() {
                 let tick_cycles = cpu.tick(&d);
                 cycles += tick_cycles as u64;
 
-                let interupt_request = cpu.mmu.tick(tick_cycles);
+                let interupt_request = cpu.mmu.tick(tick_cycles, &pixel_array1);
                 cycles += cpu.service_interupts(interupt_request) as u64;
             }
 

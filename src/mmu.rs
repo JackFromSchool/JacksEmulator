@@ -1,4 +1,6 @@
 use crate::util::{ BitOperations, le_combine };
+use crate::gpu::ColorPixel;
+use std::sync::{ Arc, Mutex };
 
 /*
  *  Memory map from nocash-s pandocs:
@@ -163,6 +165,10 @@ impl MMU {
             gpu_stuff!() => self.gpu.handle_write(index, value),
             _ => unreachable!("Handled in other match: {index}")
         }
+
+        if self.gpu.dma_transfer != 0 {
+            self.dma_transfer();
+        }
     }
     
     /// Writes a u16 to the indexed point in memory where the low nible is at index and the high
@@ -211,13 +217,14 @@ impl MMU {
         le_combine(ls, ms)
     }
 
-    pub fn tick(&mut self, ticks: u8) -> crate::interupts::Interupt {
+    pub fn tick(&mut self, ticks: u8, shared_array: &Arc<Mutex<[[ColorPixel; 160]; 144]>>) -> crate::interupts::Interupt {
         let mut interupts = 0;
         
         interupts |= self.timer.update_time(ticks);
         if self.joypad.interupt_possible {
             interupts |= 0b0001_0000;
         }
+        interupts |= self.gpu.update_graphics(ticks, shared_array);
 
         self.interupt.update_interupts(interupts);
         self.interupt.do_interupts()
@@ -229,6 +236,14 @@ impl MMU {
 
     pub fn disble_interupts(&mut self) {
         self.interupt.master = false;
+    }
+
+    pub fn dma_transfer(&mut self) {
+        let adress = (self.gpu.dma_transfer as u16) * 100;
+        for i in 0..0xA0 {
+            self.write_8(0xFE00+i, self.read_8(adress+i));
+        }
+        self.gpu.dma_transfer = 0;
     }
 
 }
