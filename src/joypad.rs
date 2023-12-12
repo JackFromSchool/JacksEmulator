@@ -1,10 +1,67 @@
 pub const JOYPAD_REG_LOC: u16 = 0xFF00;
 
-#[derive(Default)]
 /// Represents the state related to the Joypad while also handling events
 pub struct Joypad {
     /// Corelates to the register in memory mapped to the joypad IO
-    joypad_reg: u8
+    joypad_reg: u8,
+
+    direction_byte: u8,
+    button_byte: u8,
+    interupt_possible: bool,
+}
+
+pub enum ButtonEvent {
+    None,
+    Start,
+    Select,
+    A,
+    B,
+    Up,
+    Down,
+    Left,
+    Right,
+}
+
+impl ButtonEvent {
+
+    pub fn is_button(&self) -> bool {
+        match self {
+            Self::A | Self::B | Self::Select | Self::Start => true,
+            _ => false,
+        }
+    }
+
+    pub fn is_direction(&self) -> bool {
+        match self {
+            Self::Right | Self::Left | Self::Up | Self::Down => true,
+            _ => false,
+        }
+    }
+    
+}
+
+const RIGHT_A: u8 = 0b0000_0001;
+const LEFT_B: u8 = 0b0000_0010;
+const UP_SELECT: u8 = 0b0000_0100;
+const DOWN_START: u8 = 0b0000_1000;
+
+const BUTTON: u8 = 0b0010_0000;
+const DIRECTION: u8 = 0b0001_0000;
+
+pub struct ButtonEventWrapper {
+    pub event: ButtonEvent,
+    pub new_state: winit::event::ElementState,
+}
+
+impl Default for Joypad {
+    fn default() -> Self {
+        Self {
+            joypad_reg: 0,
+            direction_byte: 0xF,
+            button_byte: 0xF,
+            interupt_possible: false,
+        }
+    }
 }
 
 impl crate::mmu::Memory for Joypad {
@@ -23,6 +80,54 @@ impl crate::mmu::Memory for Joypad {
         } else {
             self.joypad_reg
         }
+    }
+    
+}
+
+impl Joypad {
+    
+    pub fn update_state(&mut self, wrapper: ButtonEventWrapper) {
+        // true means the button is NOT PRESSED
+        
+        let mut curr_state = match wrapper.event {
+            ButtonEvent::Down => self.direction_byte & DOWN_START,
+            ButtonEvent::Start => self.button_byte & DOWN_START,
+            ButtonEvent::Up => self.direction_byte & UP_SELECT,
+            ButtonEvent::Select => self.button_byte & UP_SELECT,
+            ButtonEvent::Left => self.direction_byte & LEFT_B,
+            ButtonEvent::B => self.button_byte & LEFT_B,
+            ButtonEvent::Right => self.direction_byte & RIGHT_A,
+            ButtonEvent::A => self.direction_byte & RIGHT_A,
+            ButtonEvent::None => unreachable!()
+        };
+
+        let new_state = match wrapper.new_state {
+            winit::event::ElementState::Pressed => false,
+            winit::event::ElementState::Released => true, 
+        };
+
+        if curr_state > 0 && !new_state {
+            if self.joypad_reg & BUTTON == BUTTON && wrapper.event.is_button() {
+                self.interupt_possible = true;
+            } else if self.joypad_reg & DIRECTION == DIRECTION && wrapper.event.is_direction() {
+                self.interupt_possible = true;
+            }
+        }
+        
+        if new_state {
+            if wrapper.event.is_button() {
+                self.button_byte |= curr_state & 0xF;
+            } else {
+                self.direction_byte |= curr_state & 0xF;
+            }
+        } else {
+            if wrapper.event.is_button() {
+                self.button_byte &= !curr_state;
+            } else {
+                self.direction_byte &= !curr_state;
+            }
+        }
+        
     }
     
 }

@@ -1,5 +1,6 @@
 use JEmulator::dissasembler::Dissasembler;
 use JEmulator::cpu::Cpu;
+use JEmulator::joypad::{ ButtonEvent, ButtonEventWrapper };
 
 use std::time::Instant;
 use std::sync::{ Arc, Mutex };
@@ -9,7 +10,7 @@ use std::thread;
 use winit::event_loop::EventLoop;
 use winit::window::WindowBuilder;
 use winit::dpi::LogicalSize;
-use winit::event::Event;
+use winit::event::{ Event, WindowEvent, VirtualKeyCode, ElementState };
 
 use pixels::{ SurfaceTexture, Pixels };
 
@@ -25,10 +26,6 @@ pub struct ColorPixel {
     pub g: u8,
     pub b: u8,
     pub a: u8,
-}
-
-pub enum ButtonEvent {
-    None
 }
 
 fn main() {
@@ -55,7 +52,7 @@ fn main() {
     let pixel_array1 = Arc::new(Mutex::new([[ColorPixel::default(); WIDTH as usize]; HEIGHT as usize]));
     let pixel_array2 = Arc::clone(&pixel_array1);
     
-    let (event_sender, event_receiver) = channel::<ButtonEvent>();
+    let (event_sender, event_receiver) = channel::<ButtonEventWrapper>();
     let (render_sender, render_receiver) = channel::<()>();
     
     thread::spawn(move || {
@@ -68,7 +65,8 @@ fn main() {
             let mut cycles = 0;
 
             while cycles < MAX_CYCLES {
-                let _ = event_receiver.try_recv();
+                for event in event_receiver.try_iter() {
+                }
             
                 let tick_cycles = cpu.tick(&d);
                 cycles += tick_cycles as u64;
@@ -93,9 +91,23 @@ fn main() {
         match event {
             Event::WindowEvent { window_id, event } => {
                 match event {
-                    winit::event::WindowEvent::CloseRequested => std::process::exit(0),
-                    winit::event::WindowEvent::KeyboardInput { device_id, input, is_synthetic } => {
-                        event_sender.send(ButtonEvent::None).unwrap();
+                    WindowEvent::CloseRequested => std::process::exit(0),
+                    WindowEvent::KeyboardInput { device_id, input, is_synthetic } => {
+                        if let Some(code) = input.virtual_keycode {
+                            let event = match code {
+                                VirtualKeyCode::A => ButtonEvent::A,
+                                VirtualKeyCode::S => ButtonEvent::B,
+                                VirtualKeyCode::Return => ButtonEvent::Start,
+                                VirtualKeyCode::Space => ButtonEvent::Select,
+                                VirtualKeyCode::Right => ButtonEvent::Right,
+                                VirtualKeyCode::Left => ButtonEvent::Left,
+                                VirtualKeyCode::Up => ButtonEvent::Up,
+                                VirtualKeyCode::Down => ButtonEvent::Down,
+                                _ => ButtonEvent::None,
+                            };
+                            
+                            event_sender.send(ButtonEventWrapper { event, new_state: input.state }).unwrap();
+                        }
                     }
                     _ => ()
                 }
