@@ -1,4 +1,3 @@
-
 const VBLANK_LOC: usize = 0x40;
 const LCD_LOC: usize = 0x48;
 const TIMER_LOC: usize = 0x50;
@@ -7,14 +6,14 @@ const JOYPAD_LOC: usize = 0x60;
 const IE_LOC: u16 = 0xFFFF;
 pub const IF_LOC: u16 = 0xFF0F;
 
-#[derive(PartialEq, Eq)]
+#[derive(enum_display::EnumDisplay, PartialEq, Eq)]
 pub enum Interupt {
     VBlank,
     LCD,
     Timer,
     Serial,
     Joypad,
-    None
+    None,
 }
 
 #[derive(Default)]
@@ -30,54 +29,57 @@ pub struct InteruptState {
 }
 
 impl crate::mmu::Memory for InteruptState {
-    
     fn handle_read(&self, index: u16) -> u8 {
         match index {
             IE_LOC => self.ie,
             IF_LOC => self.if_r,
-            _ => unreachable!("InteruptState does not handle this memory")
-        }    
+            _ => unreachable!("InteruptState does not handle this memory"),
+        }
     }
 
     fn handle_write(&mut self, index: u16, val: u8) {
         match index {
             IE_LOC => self.ie = val,
             IF_LOC => self.if_r = val,
-            _ => unreachable!("InteruptState does not handle this memory")
+            _ => unreachable!("InteruptState does not handle this memory"),
         }
     }
-    
 }
 
 impl InteruptState {
-    
     pub fn update_interupts(&mut self, flags: u8) {
         self.if_r |= flags;
     }
 
-    pub fn do_interupts(&mut self) -> Interupt {
-        
-        if !self.master {
+    pub fn do_interupts(&mut self, ignore_master: bool) -> Interupt {
+        if !self.master && !ignore_master {
             return Interupt::None;
         }
-        
+
         for i in [1, 2, 4, 8, 16] {
-            if (self.ie & i) == i {
-                self.ie &= !i;
+            if (self.ie & i) == i && (self.if_r & i) == i {
+                self.if_r &= !i;
                 let interupt = match i {
                     1 => Interupt::VBlank,
                     2 => Interupt::LCD,
                     4 => Interupt::Timer,
                     8 => Interupt::Serial,
                     16 => Interupt::Joypad,
-                    _ => unreachable!()
+                    _ => unreachable!(),
                 };
-                
+
                 return interupt;
             }
         }
-        
+
         Interupt::None
     }
-    
+
+    pub fn has_interupts(&self) -> bool {
+        if (self.if_r & self.ie) != 0 {
+            true
+        } else {
+            false
+        }
+    }
 }

@@ -50,7 +50,7 @@ pub mod C4 {
     pub const CONTROL_LOC: u16 = 0xFF23;
 }
 
-const WAVE_PATTERN_RAM_SIZE: usize = 0xF;
+const WAVE_PATTERN_RAM_SIZE: usize = 0x10;
 
 /// Represents the state related to the audio processing unit
 /// This is *not* implemented currently

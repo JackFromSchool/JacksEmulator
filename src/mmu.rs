@@ -57,7 +57,7 @@ macro_rules! gpu_stuff(
 );
 
 const WRAM_SIZE: usize = 0x2000;
-const HRAM_SIZE: usize = 0x7E;
+const HRAM_SIZE: usize = 0x7F;
 
 pub trait Memory {
     fn handle_write(&mut self, index: u16, val: u8);
@@ -67,12 +67,13 @@ pub trait Memory {
 pub struct MMU {
     gpu: crate::gpu::GPU,
     timer: crate::timer::Timer,
-    interupt: crate::interupts::InteruptState,
+    pub interupt: crate::interupts::InteruptState,
     pub joypad: crate::joypad::Joypad,
     apu: crate::apu::APU,
     cartridge: crate::cartridge::Cartridge,
     wram: [u8; WRAM_SIZE],
     hram: [u8; HRAM_SIZE],
+    serial: char,
 }
 
 impl MMU {
@@ -90,6 +91,7 @@ impl MMU {
             cartridge: Cartridge::default(),
             wram: [0; WRAM_SIZE],
             hram: [0; HRAM_SIZE],
+            serial: ' ',
         }
     }
     
@@ -137,8 +139,7 @@ impl MMU {
     /// Wrties a u8 to the indexed point in memory
     pub fn write_8(&mut self, index: u16, value: u8) {
         use crate::interupts::IF_LOC;
-        // TODO: Add a case that only allows writing to hram during dma transfer
-        
+
         let mut io = false;
         match index {
             ROM_START..=ROM_END => self.cartridge.handle_write(index, value),
@@ -150,7 +151,7 @@ impl MMU {
             UNUSABLE_START..=UNUSABLE_END => (),
             IO_START..=IO_END => io = true,
             HRAM_START..=HRAM_END => self.hram[(index - HRAM_START) as usize] = value,
-            INTERRUPT_REG => self.interupt.handle_write(index, value)
+            INTERRUPT_REG => self.interupt.handle_write(index, value) 
         }
 
         if !io {
@@ -158,12 +159,14 @@ impl MMU {
         }
 
         match index {
+            0xFF01 => self.serial = value as char,
+            0xFF02 => print!("{}", self.serial),
             crate::joypad::JOYPAD_REG_LOC => self.joypad.handle_write(index, value),
             IF_LOC => self.interupt.handle_write(index, value),
             timer_stuff!() => self.timer.handle_write(index, value),
             apu_stuff!() => self.apu.handle_write(index, value),
             gpu_stuff!() => self.gpu.handle_write(index, value),
-            _ => unreachable!("Handled in other match: {index}")
+            _ => { log::warn!("Tried to write to non existent register {:x}", index)},
         }
 
         if self.gpu.dma_transfer != 0 {
@@ -201,7 +204,7 @@ impl MMU {
                     timer_stuff!() => self.timer.handle_read(index),
                     apu_stuff!() => self.apu.handle_read(index),
                     gpu_stuff!() => self.gpu.handle_read(index),
-                    _ => unreachable!("Handled in other match")
+                    _ => {log::warn!("Reading from memory that doesn't exist: {}", index); 0xFF}
                 }
             },
             HRAM_START..=HRAM_END => self.hram[(index - HRAM_START) as usize],
@@ -213,11 +216,11 @@ impl MMU {
     /// high nibble is at index+1
     pub fn read_16(&self, index: u16) -> u16 {
         let ls = self.read_8(index);
-        let ms = self.read_8(index + 1);
+        let ms = self.read_8(index.wrapping_add(1));
         le_combine(ls, ms)
     }
 
-    pub fn tick(&mut self, ticks: u8, shared_array: &Arc<Mutex<[[ColorPixel; 160]; 144]>>) -> crate::interupts::Interupt {
+    pub fn tick(&mut self, ticks: u8, ignore_master: bool, shared_array: &Arc<Mutex<[[ColorPixel; 160]; 144]>>) -> crate::interupts::Interupt {
         let mut interupts = 0;
         
         interupts |= self.timer.update_time(ticks);
@@ -227,7 +230,7 @@ impl MMU {
         interupts |= self.gpu.update_graphics(ticks, shared_array);
 
         self.interupt.update_interupts(interupts);
-        self.interupt.do_interupts()
+        self.interupt.do_interupts(ignore_master)
     }
 
     pub fn enable_interupts(&mut self) {

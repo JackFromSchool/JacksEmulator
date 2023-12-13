@@ -36,6 +36,10 @@ impl MemController for NoMbc {
 
     fn load_rom(&mut self, bytes: Vec<u8>) {
         let mut vec_rom = Vec::with_capacity(RAM_SIZE);
+
+        for _ in 0..RAM_SIZE {
+            self.ram.push(0);
+        }
         
         for byte in bytes {
             vec_rom.push(byte);

@@ -30,7 +30,7 @@ const OBP2_LOC: u16 = 0xFF49;
 const DMA_TRANSFER_LOC: u16 = 0xFF46;
 
 const SPRITE_TABLE_SIZE: usize = 0xA0;
-const VRAM_SIZE: usize = 0x1FFF;
+const VRAM_SIZE: usize = 0x2000;
 
 const HBLANK_PERIOD: u64 = 204+172+80;
 const DRAW_PERIOD: u64 = 172+80;
@@ -42,6 +42,13 @@ pub struct ColorPixel {
     pub g: u8,
     pub b: u8,
     pub a: u8,
+}
+
+enum TilePixelValue {
+    Zero,
+    One,
+    Two,
+    Three,
 }
 
 #[derive(PartialEq, Eq)]
@@ -237,7 +244,7 @@ impl GPU {
 
 
         let y_pos = if !window {
-            sy + self.current_scanline
+            sy.wrapping_add(self.current_scanline)
         } else {
             self.current_scanline - wy
         };

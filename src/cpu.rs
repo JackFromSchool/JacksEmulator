@@ -1,53 +1,97 @@
-use crate::register::Registers;
-use crate::mmu::MMU;
-use crate::dissasembler::{ Take, RegisterData, Flags, Register, Condition, Instruction, Dissasembler };
-use crate::util::{ BitOperations, le_combine };
+use crate::dissasembler::{
+    Condition, Dissasembler, Flags, Instruction, Register, RegisterData, Take,
+};
 use crate::interupts::Interupt;
+use crate::mmu::MMU;
+use crate::register::Registers;
+use crate::util::{le_combine, BitOperations};
+
+use std::fs::File;
+use std::fs::OpenOptions;
+use std::io::LineWriter;
+use std::io::Write;
 
 pub struct Cpu {
     pub registers: Registers,
     pub mmu: MMU,
     pub halted: bool,
+    pub debug_file: LineWriter<File>,
 }
 
 impl Cpu {
-
     pub fn from_rom(rom: Vec<u8>) -> Self {
+        File::create("log.txt").unwrap();
+        let file = OpenOptions::new()
+            .write(true)
+            .append(true)
+            .open("log.txt")
+            .unwrap();
+
+        let debug_file = LineWriter::new(file);
+
         let mut cpu = Self {
             registers: Registers::default(),
             mmu: MMU::new(rom),
             halted: false,
+            debug_file,
         };
 
         // Cpu defaults
-        /*
-        cpu.registers.pc = 0;
+        cpu.registers.pc = 0x0;
         cpu.registers.set_af(0x01B0);
         cpu.registers.set_bc(0x0013);
         cpu.registers.set_de(0x00D8);
         cpu.registers.set_hl(0x014D);
         cpu.registers.sp = 0xFFFE;
-        */
 
         cpu
     }
 
+    pub fn tick(&mut self, d: &Dissasembler) -> (u8, bool) {
+        if self.halted {
+            if self.mmu.interupt.has_interupts() {
+                self.halted = false;
+                return (4, true);
+            }
+            return (4, false);
+        }
+        
+        let pc = self.registers.pc;
+        println!("{}", pc);
 
-    pub fn tick(&mut self, d: &Dissasembler) -> u8 {
+        /*
+        let str = format!("A:{:02x} F:{:02x} B:{:02x} C:{:02x} D:{:02x} E:{:02x} H:{:02x} L:{:02x} SP:{:04x} PC:{:04x} PCMEM:{:02x},{:02x},{:02x},{:02x}\n",
+                          self.registers.a,
+                          self.registers.f,
+                          self.registers.b,
+                          self.registers.c,
+                          self.registers.d,
+                          self.registers.e,
+                          self.registers.h,
+                          self.registers.l,
+                          self.registers.sp,
+                          self.registers.pc,
+                          self.mmu.read_8(pc),
+                          self.mmu.read_8(pc.wrapping_add(1)),
+                          self.mmu.read_8(pc.wrapping_add(2)),
+                          self.mmu.read_8(pc.wrapping_add(3))
+                          ).to_uppercase();
+
+        self.debug_file.write_all(str.as_bytes()).unwrap();
+        */
+        //println!("{}", self.registers.pc);
         let mut code = &d.unprefixed[&self.mmu.read_8(self.registers.pc)];
         self.increment(RegisterData::from_reg(Register::PC));
 
         if matches!(code.instruction, Instruction::PREFIX) {
-           code = &d.prefixed[&self.mmu.read_8(self.registers.pc)];
-           self.increment(RegisterData::from_reg(Register::PC));
+            code = &d.prefixed[&self.mmu.read_8(self.registers.pc)];
+            self.increment(RegisterData::from_reg(Register::PC));
         }
-        
+
         let mut instruction = code.instruction;
+
+        //println!("Running: {}", instruction);
         
-        //log::debug!("Running: {instruction}");
-        println!("Running: {}", instruction);
-        
-        // TODO: Edge Cases
         match code.extra_data {
             Take::None => (),
             Take::Eight => {
@@ -56,7 +100,7 @@ impl Cpu {
                 } else {
                     instruction = instruction.insert_r2(self.get_8());
                 }
-            },
+            }
             Take::Sixteen => {
                 if code.code == 0x08 || code.code == 0xEA {
                     instruction = instruction.insert_r1(self.get_16())
@@ -65,7 +109,7 @@ impl Cpu {
                 }
             }
         }
-        
+
         match instruction {
             Instruction::NOP => (),
             Instruction::STOP => std::process::exit(0),
@@ -116,8 +160,8 @@ impl Cpu {
             Instruction::SET(b, r) => self.set_bit(b, r),
             Instruction::PREFIX => (),
         };
-        
-        code.cycles.into()
+
+        (code.cycles.into(), false)
     }
 
     pub fn get_8(&mut self) -> RegisterData {
@@ -135,29 +179,33 @@ impl Cpu {
 
     pub fn load_incrememnt(&mut self, _r1: RegisterData, r2: RegisterData) {
         if r2.register.is_16() {
-            self.registers.set_hl(self.registers.get_hl().wrapping_add(1));
             let val = self.mmu.read_8(self.registers.get_hl());
+            self.registers
+                .set_hl(self.registers.get_hl().wrapping_add(1));
 
             self.registers.a = val;
         } else {
             let val = self.registers.a;
-            
-            self.registers.set_hl(self.registers.get_hl().wrapping_add(1));
+
             self.mmu.write_8(self.registers.get_hl(), val);
+            self.registers
+                .set_hl(self.registers.get_hl().wrapping_add(1));
         }
     }
 
     pub fn load_decrement(&mut self, _r1: RegisterData, r2: RegisterData) {
         if r2.register.is_16() {
-            self.registers.set_hl(self.registers.get_hl().wrapping_sub(1));
             let val = self.mmu.read_8(self.registers.get_hl());
+            self.registers
+                .set_hl(self.registers.get_hl().wrapping_sub(1));
 
             self.registers.a = val;
         } else {
             let val = self.registers.a;
 
-            self.registers.set_hl(self.registers.get_hl().wrapping_sub(1));
             self.mmu.write_8(self.registers.get_hl(), val);
+            self.registers
+                .set_hl(self.registers.get_hl().wrapping_sub(1));
         }
     }
 
@@ -168,13 +216,13 @@ impl Cpu {
             match r1.register {
                 Register::C => self.mmu.write_8(self.registers.c as u16 + 0xFF00, val),
                 Register::Const8(i) => self.mmu.write_8(i as u16 + 0xFF00, val),
-                _ => unreachable!()
+                _ => unreachable!(),
             }
         } else {
             let val = match r2.register {
-                Register::C => self.mmu.read_8(self.registers.c as u16 + 0xFF00),
-                Register::Const8(i) => self.mmu.read_8(i as u16 + 0xFF00),
-                _ => unreachable!()
+                Register::C => self.mmu.read_8((self.registers.c as u16) + 0xFF00),
+                Register::Const8(i) => self.mmu.read_8(0xFF00 + (i as u16)),
+                _ => unreachable!(),
             };
 
             self.registers.a = val;
@@ -184,10 +232,11 @@ impl Cpu {
     pub fn load_hl_sp(&mut self, r: RegisterData) {
         let val = match r.register {
             Register::Const8(x) => x as i8 as i16,
-            _ => unreachable!()
+            _ => unreachable!(),
         };
 
-        self.registers.set_hl(self.mmu.read_16(self.registers.sp.wrapping_add_signed(val)));
+        self.registers
+            .set_hl(self.mmu.read_16(self.registers.sp.wrapping_add_signed(val)));
 
         let reg = &mut self.registers;
         reg.unset_z();
@@ -206,9 +255,8 @@ impl Cpu {
                 Register::SP => self.registers.sp,
                 Register::PC => self.registers.pc,
                 Register::Const16(x) => x,
-                _ => unreachable!("u16 values are handled here not a {}", r2.register)
+                _ => unreachable!("u16 values are handled here not a {}", r2.register),
             };
-
 
             if r2.pointer {
                 val = self.mmu.read_16(val);
@@ -223,11 +271,16 @@ impl Cpu {
                     Register::SP => self.registers.sp,
                     Register::PC => self.registers.pc,
                     Register::Const16(x) => x,
-                    _ => unreachable!("All u16 values are handled here not a {}", r1.register)
+                    _ => unreachable!("All u16 values are handled here not a {}", r1.register),
                 };
 
                 self.mmu.write_16(index, val);
             } else {
+                if matches!(r1.register, Register::A) {
+                    self.registers.a = self.mmu.read_8(val);
+                    return;
+                }
+
                 match r1.register {
                     Register::AF => self.registers.set_af(val),
                     Register::BC => self.registers.set_bc(val),
@@ -235,10 +288,10 @@ impl Cpu {
                     Register::HL => self.registers.set_hl(val),
                     Register::SP => self.registers.sp = val,
                     Register::PC => self.registers.pc = val,
-                    _ => unreachable!("All u16 values are handled here not a {}", r1.register)
+                    Register::Const16(x) => self.mmu.write_16(x, val),
+                    _ => unreachable!("All u16 values are handled here not a {}", r1.register),
                 };
             }
-
         } else {
             let val = match r2.register {
                 Register::A => self.registers.a,
@@ -251,7 +304,7 @@ impl Cpu {
                 Register::L => self.registers.l,
                 Register::Const8(x) => x,
                 _ => {
-                    let mut index = match r2.register {
+                    let index = match r2.register {
                         Register::AF => self.registers.get_af(),
                         Register::BC => self.registers.get_bc(),
                         Register::DE => self.registers.get_de(),
@@ -259,7 +312,7 @@ impl Cpu {
                         Register::SP => self.registers.sp,
                         Register::PC => self.registers.pc,
                         Register::Const16(x) => x,
-                        _ => unreachable!("Handled in outer match")
+                        _ => unreachable!("Handled in outer match: {}", r2.register),
                     };
 
                     self.mmu.read_8(index)
@@ -276,7 +329,7 @@ impl Cpu {
                 Register::H => self.registers.h = val,
                 Register::L => self.registers.l = val,
                 _ => {
-                    let mut index = match r2.register {
+                    let mut index = match r1.register {
                         Register::AF => self.registers.get_af(),
                         Register::BC => self.registers.get_bc(),
                         Register::DE => self.registers.get_de(),
@@ -284,7 +337,7 @@ impl Cpu {
                         Register::SP => self.registers.sp,
                         Register::PC => self.registers.pc,
                         Register::Const16(x) => x,
-                        _ => unreachable!("Handled in outer match")
+                        _ => unreachable!("Handled in outer match: {}", r1.register),
                     };
 
                     self.mmu.write_8(index, val);
@@ -300,7 +353,7 @@ impl Cpu {
             Register::DE => self.registers.get_de(),
             Register::HL => self.registers.get_hl(),
             Register::PC => self.registers.pc,
-            _ => unreachable!("No other registers pushed to stack")
+            _ => unreachable!("No other registers pushed to stack"),
         };
 
         let (ms, ls) = val.split();
@@ -315,36 +368,38 @@ impl Cpu {
         let sp = &mut self.registers.sp;
 
         let ls = self.mmu.read_8(*sp);
-        *sp -= 1;
+        *sp += 1;
         let ms = self.mmu.read_8(*sp);
-        *sp -= 1;
+        *sp += 1;
 
         let val = le_combine(ls, ms);
         match r1.register {
-            Register::AF => self.registers.set_af(val),
+            Register::AF => self
+                .registers
+                .set_af((val & 0xFFF0) | self.registers.get_af() & 0x000F),
             Register::BC => self.registers.set_bc(val),
             Register::DE => self.registers.set_de(val),
             Register::HL => self.registers.set_hl(val),
             Register::PC => self.registers.pc = val,
-            _ => unreachable!("No other registers pushed to stack")
+            _ => unreachable!("No other registers pushed to stack"),
         };
     }
 
     fn add(&mut self, r1: RegisterData, r2: RegisterData, flags: Flags) {
         if r1.register == Register::SP {
             let og = self.registers.sp;
-            
+
             let add = match r2.register {
                 Register::Const8(x) => x as i8 as i16,
-                _ => unreachable!()
+                _ => unreachable!(),
             };
 
             let sum = og.wrapping_add_signed(add);
             let reg = &mut self.registers;
-            
+
             reg.unset_z();
             reg.unset_n();
-            
+
             // Flags may be incorrect but they are usesless so who cares
             let cast = og as i16;
             if add < 0 {
@@ -374,20 +429,19 @@ impl Cpu {
             }
 
             reg.sp = sum;
-            
         } else if r1.register.is_16() {
             let og = self.registers.get_hl();
-            
+
             let add = match r2.register {
                 Register::BC => self.registers.get_bc(),
                 Register::DE => self.registers.get_de(),
                 Register::HL => self.registers.get_hl(),
                 Register::SP => self.registers.sp,
-                _ => unreachable!()
+                _ => unreachable!(),
             };
 
             let (sum, overflowed) = og.overflowing_add(add);
-            
+
             let reg = &mut self.registers;
             if overflowed {
                 reg.set_c()
@@ -403,7 +457,6 @@ impl Cpu {
 
             reg.unset_n();
             reg.set_hl(sum);
-            
         } else {
             let og = self.registers.a;
 
@@ -417,12 +470,12 @@ impl Cpu {
                 Register::L => self.registers.l,
                 Register::HL => self.mmu.read_8(self.registers.get_hl()),
                 Register::Const8(x) => x,
-                _ => unreachable!()
+                _ => unreachable!(),
             };
 
             let (sum, overflowed) = og.overflowing_add(add);
             let reg = &mut self.registers;
-            
+
             if overflowed {
                 reg.set_c()
             } else {
@@ -458,34 +511,36 @@ impl Cpu {
             Register::L => self.registers.l,
             Register::HL => self.mmu.read_8(self.registers.get_hl()),
             Register::Const8(x) => x,
-            _ => unreachable!()
+            _ => unreachable!(),
         };
-        
+
         let a = self.registers.a;
         let reg = &mut self.registers;
 
-        let (sum, overflowed) = a.overflowing_add(add + if reg.get_c() { 1 } else { 0 });
-
-        if overflowed {
-            reg.set_c();
-        } else {
-            reg.unset_c();
-        }
-
-        if (a & 0xF) + (add & 0xF) > 0xF {
+        let (sum, overflowed) = a.overflowing_add(add);
+        let (sum2, overflowed2) = sum.overflowing_add(if reg.get_c() { 1 } else { 0 });
+        
+        if (a & 0xF) + (add & 0xF) + if reg.get_c() { 1 } else { 0 } > 0xF {
             reg.set_h();
         } else {
             reg.unset_h();
         }
 
-        if sum == 0 {
+        if overflowed || overflowed2 {
+            reg.set_c();
+        } else {
+            reg.unset_c();
+        }
+
+        if sum2 == 0 {
             reg.set_z();
         } else {
             reg.unset_z();
         }
 
-        reg.a = sum;
-        
+        reg.unset_n();
+
+        reg.a = sum2;
     }
 
     pub fn subtract(&mut self, r: RegisterData) {
@@ -499,7 +554,7 @@ impl Cpu {
             Register::L => self.registers.l,
             Register::HL => self.mmu.read_8(self.registers.get_hl()),
             Register::Const8(x) => x,
-            _ => unreachable!()
+            _ => unreachable!(),
         };
 
         let a = self.registers.a;
@@ -516,7 +571,7 @@ impl Cpu {
         if (a & 0xF) < (sub & 0xF) {
             reg.set_h();
         } else {
-            reg.unset_c();
+            reg.unset_h();
         }
 
         if result == 0 {
@@ -528,7 +583,7 @@ impl Cpu {
         reg.set_n();
 
         reg.a = result;
-    } 
+    }
 
     pub fn subtract_carry(&mut self, r: RegisterData) {
         let sub = match r.register {
@@ -541,23 +596,23 @@ impl Cpu {
             Register::L => self.registers.l,
             Register::HL => self.mmu.read_8(self.registers.get_hl()),
             Register::Const8(x) => x,
-            _ => unreachable!()
+            _ => unreachable!(),
         };
-        
+
         let c = if self.registers.get_c() { 1 } else { 0 };
         let a = self.registers.a;
         let reg = &mut self.registers;
 
         let result = a.wrapping_sub(sub).wrapping_sub(c);
+        
+        if (a & 0xF) < (sub & 0xF) + c {
+            reg.set_h();
+        } else {
+            reg.unset_h();
+        }
 
         if (a as u16) < ((sub as u16) + (c as u16)) {
             reg.set_c();
-        } else {
-            reg.unset_c();
-        }
-
-        if (a & 0xF) < ((sub &0xF) + c) {
-            reg.set_h();
         } else {
             reg.unset_c();
         }
@@ -584,7 +639,7 @@ impl Cpu {
             Register::L => self.registers.l,
             Register::HL => self.mmu.read_8(self.registers.get_hl()),
             Register::Const8(x) => x,
-            _ => unreachable!()
+            _ => unreachable!(),
         };
 
         let a = self.registers.a;
@@ -598,10 +653,10 @@ impl Cpu {
             reg.unset_c();
         }
 
-        if (a & 0xF) < (sub &0xF) {
+        if (a & 0xF) < (sub & 0xF) {
             reg.set_h();
         } else {
-            reg.unset_c();
+            reg.unset_h();
         }
 
         if result == 0 {
@@ -614,7 +669,7 @@ impl Cpu {
     }
 
     pub fn increment(&mut self, r: RegisterData) {
-        if r.register.is_16() {
+        if r.register.is_16() && !r.pointer {
             let reg = &mut self.registers;
             match r.register {
                 Register::BC => reg.set_bc(reg.get_bc().wrapping_add(1)),
@@ -622,7 +677,7 @@ impl Cpu {
                 Register::HL => reg.set_hl(reg.get_hl().wrapping_add(1)),
                 Register::SP => reg.sp = reg.sp.wrapping_add(1),
                 Register::PC => reg.pc = reg.pc.wrapping_add(1),
-                _ => unreachable!()
+                _ => unreachable!(),
             };
         } else {
             let og = match r.register {
@@ -634,7 +689,7 @@ impl Cpu {
                 Register::H => self.registers.h,
                 Register::L => self.registers.l,
                 Register::HL => self.mmu.read_8(self.registers.get_hl()),
-                _ => unreachable!()
+                _ => unreachable!(),
             };
 
             let reg = &mut self.registers;
@@ -664,20 +719,20 @@ impl Cpu {
                 Register::H => self.registers.h = result,
                 Register::L => self.registers.l = result,
                 Register::HL => self.mmu.write_8(self.registers.get_hl(), result),
-                _ => unreachable!()
+                _ => unreachable!(),
             };
         }
     }
-    
+
     pub fn decrement(&mut self, r: RegisterData) {
-        if r.register.is_16() {
+        if r.register.is_16() && !r.pointer {
             let reg = &mut self.registers;
             match r.register {
                 Register::BC => reg.set_bc(reg.get_bc().wrapping_sub(1)),
                 Register::DE => reg.set_de(reg.get_de().wrapping_sub(1)),
                 Register::HL => reg.set_hl(reg.get_hl().wrapping_sub(1)),
                 Register::SP => reg.sp = reg.sp.wrapping_sub(1),
-                _ => unreachable!()
+                _ => unreachable!(),
             };
         } else {
             let og = match r.register {
@@ -689,7 +744,7 @@ impl Cpu {
                 Register::H => self.registers.h,
                 Register::L => self.registers.l,
                 Register::HL => self.mmu.read_8(self.registers.get_hl()),
-                _ => unreachable!()
+                _ => unreachable!(),
             };
 
             let reg = &mut self.registers;
@@ -700,7 +755,7 @@ impl Cpu {
                 reg.unset_z();
             }
 
-            if (og & 0xF) == 0  {
+            if (og & 0xF) == 0 {
                 reg.set_h();
             } else {
                 reg.unset_h();
@@ -719,22 +774,23 @@ impl Cpu {
                 Register::H => self.registers.h = result,
                 Register::L => self.registers.l = result,
                 Register::HL => self.mmu.write_8(self.registers.get_hl(), result),
-                _ => unreachable!()
+                _ => unreachable!(),
             };
         }
     }
 
     pub fn and(&mut self, r: RegisterData) {
         let og = match r.register {
-                Register::A => self.registers.a,
-                Register::B => self.registers.b,
-                Register::C => self.registers.c,
-                Register::D => self.registers.d,
-                Register::E => self.registers.e,
-                Register::H => self.registers.h,
-                Register::L => self.registers.l,
-                Register::HL => self.mmu.read_8(self.registers.get_hl()),
-                _ => unreachable!()
+            Register::A => self.registers.a,
+            Register::B => self.registers.b,
+            Register::C => self.registers.c,
+            Register::D => self.registers.d,
+            Register::E => self.registers.e,
+            Register::H => self.registers.h,
+            Register::L => self.registers.l,
+            Register::HL => self.mmu.read_8(self.registers.get_hl()),
+            Register::Const8(x) => x,
+            _ => unreachable!(),
         };
 
         let a = self.registers.a;
@@ -747,25 +803,32 @@ impl Cpu {
         }
 
         reg.set_h();
+        reg.unset_n();
+        reg.unset_c();
 
         reg.a = a & og;
     }
 
     pub fn or(&mut self, r: RegisterData) {
         let og = match r.register {
-                Register::A => self.registers.a,
-                Register::B => self.registers.b,
-                Register::C => self.registers.c,
-                Register::D => self.registers.d,
-                Register::E => self.registers.e,
-                Register::H => self.registers.h,
-                Register::L => self.registers.l,
-                Register::HL => self.mmu.read_8(self.registers.get_hl()),
-                _ => unreachable!()
+            Register::A => self.registers.a,
+            Register::B => self.registers.b,
+            Register::C => self.registers.c,
+            Register::D => self.registers.d,
+            Register::E => self.registers.e,
+            Register::H => self.registers.h,
+            Register::L => self.registers.l,
+            Register::HL => self.mmu.read_8(self.registers.get_hl()),
+            Register::Const8(x) => x,
+            _ => unreachable!(),
         };
 
         let a = self.registers.a;
         let reg = &mut self.registers;
+
+        reg.unset_c();
+        reg.unset_n();
+        reg.unset_h();
 
         if (a | og) == 0 {
             reg.set_z();
@@ -778,19 +841,24 @@ impl Cpu {
 
     pub fn xor(&mut self, r: RegisterData) {
         let og = match r.register {
-                Register::A => self.registers.a,
-                Register::B => self.registers.b,
-                Register::C => self.registers.c,
-                Register::D => self.registers.d,
-                Register::E => self.registers.e,
-                Register::H => self.registers.h,
-                Register::L => self.registers.l,
-                Register::HL => self.mmu.read_8(self.registers.get_hl()),
-                _ => unreachable!()
+            Register::A => self.registers.a,
+            Register::B => self.registers.b,
+            Register::C => self.registers.c,
+            Register::D => self.registers.d,
+            Register::E => self.registers.e,
+            Register::H => self.registers.h,
+            Register::L => self.registers.l,
+            Register::HL => self.mmu.read_8(self.registers.get_hl()),
+            Register::Const8(x) => x,
+            _ => unreachable!(),
         };
 
         let a = self.registers.a;
         let reg = &mut self.registers;
+
+        reg.unset_c();
+        reg.unset_n();
+        reg.unset_h();
 
         if (a ^ og) == 0 {
             reg.set_z();
@@ -832,7 +900,7 @@ impl Cpu {
             reg.unset_c();
         }
 
-        reg.a = (reg.a >> 1) | if reg.get_c() { 1 } else { 0 };
+        reg.a = (reg.a << 1) | if reg.get_c() { 1 } else { 0 };
     }
 
     pub fn rotate_right_a(&mut self) {
@@ -879,7 +947,7 @@ impl Cpu {
             Register::H => self.registers.h,
             Register::L => self.registers.l,
             Register::HL => self.mmu.read_8(self.registers.get_hl()),
-            _ => unreachable!()
+            _ => unreachable!(),
         };
 
         let reg = &mut self.registers;
@@ -912,7 +980,7 @@ impl Cpu {
             Register::H => self.registers.h = new,
             Register::L => self.registers.l = new,
             Register::HL => self.mmu.write_8(self.registers.get_hl(), new),
-            _ => unreachable!()
+            _ => unreachable!(),
         }
     }
 
@@ -926,7 +994,7 @@ impl Cpu {
             Register::H => self.registers.h,
             Register::L => self.registers.l,
             Register::HL => self.mmu.read_8(self.registers.get_hl()),
-            _ => unreachable!()
+            _ => unreachable!(),
         };
 
         let reg = &mut self.registers;
@@ -957,7 +1025,7 @@ impl Cpu {
             Register::H => self.registers.h = new,
             Register::L => self.registers.l = new,
             Register::HL => self.mmu.write_8(self.registers.get_hl(), new),
-            _ => unreachable!()
+            _ => unreachable!(),
         }
     }
 
@@ -971,7 +1039,7 @@ impl Cpu {
             Register::H => self.registers.h,
             Register::L => self.registers.l,
             Register::HL => self.mmu.read_8(self.registers.get_hl()),
-            _ => unreachable!()
+            _ => unreachable!(),
         };
 
         let reg = &mut self.registers;
@@ -1004,7 +1072,7 @@ impl Cpu {
             Register::H => self.registers.h = new,
             Register::L => self.registers.l = new,
             Register::HL => self.mmu.write_8(self.registers.get_hl(), new),
-            _ => unreachable!()
+            _ => unreachable!(),
         }
     }
 
@@ -1018,7 +1086,7 @@ impl Cpu {
             Register::H => self.registers.h,
             Register::L => self.registers.l,
             Register::HL => self.mmu.read_8(self.registers.get_hl()),
-            _ => unreachable!()
+            _ => unreachable!(),
         };
 
         let reg = &mut self.registers;
@@ -1049,7 +1117,7 @@ impl Cpu {
             Register::H => self.registers.h = new,
             Register::L => self.registers.l = new,
             Register::HL => self.mmu.write_8(self.registers.get_hl(), new),
-            _ => unreachable!()
+            _ => unreachable!(),
         }
     }
 
@@ -1079,39 +1147,37 @@ impl Cpu {
     }
 
     pub fn decimal_adjust_accumulator(&mut self) {
-        let mut a = self.registers.a;
+        let mut value = self.registers.a;
         let mut adjust = 0;
-        let reg = &mut self.registers;
-        
-        if reg.get_n() {
-            adjust |= if reg.get_c() { 0x60 } else { 0x00 };
-            adjust |= if reg.get_h() { 0x06} else { 0x00 };
-            a = a.wrapping_sub(adjust);
-        } else {
-            adjust |= if a & 0x0F > 0x09 { 0x06 } else { 0x00 };
-            adjust |= if a > 099 { 0x60 } else { 0x00 };
-            a = a.wrapping_add(adjust);
-        }
-        
-        if adjust >= 0x60 {
-            reg.set_c();
-        } else {
-            reg.unset_c();
+
+        if self.registers.get_h() || (!self.registers.get_n() && (value & 0xF) > 9) {
+            adjust |= 0x6;
         }
 
-        if a == 0 {
-            reg.set_z();
-        } else {
-            reg.unset_z();
+        if self.registers.get_c() || (!self.registers.get_n() && (value > 0x99)) {
+            adjust |= 0x60;
+            self.registers.set_c();
         }
 
-        reg.unset_h();
-        
-        reg.a = a;
+        value = value.wrapping_add_signed(if self.registers.get_n() {
+            -adjust
+        } else {
+            adjust
+        });
+
+        if value == 0 {
+            self.registers.set_z();
+        } else {
+            self.registers.unset_z();
+        }
+
+        self.registers.unset_h();
+
+        self.registers.a = value;
     }
 
     pub fn shift_left_arithmetic(&mut self, r: RegisterData) {
-        let og  = match r.register {
+        let og = match r.register {
             Register::A => self.registers.a,
             Register::B => self.registers.b,
             Register::C => self.registers.c,
@@ -1120,7 +1186,7 @@ impl Cpu {
             Register::H => self.registers.h,
             Register::L => self.registers.l,
             Register::HL => self.mmu.read_8(self.registers.get_hl()),
-            _ => unreachable!()
+            _ => unreachable!(),
         };
 
         let reg = &mut self.registers;
@@ -1132,13 +1198,13 @@ impl Cpu {
         }
 
         let result = og << 1;
-        
+
         if result == 0 {
             reg.set_z();
         } else {
             reg.unset_z();
         }
-        
+
         reg.unset_h();
         reg.unset_n();
 
@@ -1151,12 +1217,12 @@ impl Cpu {
             Register::H => self.registers.h = result,
             Register::L => self.registers.l = result,
             Register::HL => self.mmu.write_8(self.registers.get_hl(), result),
-            _ => unreachable!()
+            _ => unreachable!(),
         }
     }
 
     pub fn shift_right_arithmetic(&mut self, r: RegisterData) {
-        let og  = match r.register {
+        let og = match r.register {
             Register::A => self.registers.a,
             Register::B => self.registers.b,
             Register::C => self.registers.c,
@@ -1165,7 +1231,7 @@ impl Cpu {
             Register::H => self.registers.h,
             Register::L => self.registers.l,
             Register::HL => self.mmu.read_8(self.registers.get_hl()),
-            _ => unreachable!()
+            _ => unreachable!(),
         };
 
         let reg = &mut self.registers;
@@ -1176,8 +1242,8 @@ impl Cpu {
             reg.unset_c();
         }
 
-        let result = (og >> 1) | ( og & 0x80);
-        
+        let result = (og >> 1) | (og & 0x80);
+
         if result == 0 {
             reg.set_z();
         } else {
@@ -1196,12 +1262,12 @@ impl Cpu {
             Register::H => self.registers.h = result,
             Register::L => self.registers.l = result,
             Register::HL => self.mmu.write_8(self.registers.get_hl(), result),
-            _ => unreachable!()
+            _ => unreachable!(),
         }
     }
 
     pub fn shift_right_logical(&mut self, r: RegisterData) {
-        let og  = match r.register {
+        let og = match r.register {
             Register::A => self.registers.a,
             Register::B => self.registers.b,
             Register::C => self.registers.c,
@@ -1210,7 +1276,7 @@ impl Cpu {
             Register::H => self.registers.h,
             Register::L => self.registers.l,
             Register::HL => self.mmu.read_8(self.registers.get_hl()),
-            _ => unreachable!()
+            _ => unreachable!(),
         };
 
         let reg = &mut self.registers;
@@ -1220,12 +1286,12 @@ impl Cpu {
         } else {
             reg.unset_c();
         }
-        
+
         reg.unset_h();
         reg.unset_n();
 
         let result = og >> 1;
-        
+
         if result == 0 {
             reg.set_z();
         } else {
@@ -1241,12 +1307,12 @@ impl Cpu {
             Register::H => self.registers.h = result,
             Register::L => self.registers.l = result,
             Register::HL => self.mmu.write_8(self.registers.get_hl(), result),
-            _ => unreachable!()
+            _ => unreachable!(),
         }
     }
 
     pub fn swap(&mut self, r: RegisterData) {
-        let og  = match r.register {
+        let og = match r.register {
             Register::A => self.registers.a,
             Register::B => self.registers.b,
             Register::C => self.registers.c,
@@ -1255,7 +1321,7 @@ impl Cpu {
             Register::H => self.registers.h,
             Register::L => self.registers.l,
             Register::HL => self.mmu.read_8(self.registers.get_hl()),
-            _ => unreachable!()
+            _ => unreachable!(),
         };
 
         let result = (og >> 4) | (og << 4);
@@ -1281,12 +1347,12 @@ impl Cpu {
             Register::H => self.registers.h = result,
             Register::L => self.registers.l = result,
             Register::HL => self.mmu.write_8(self.registers.get_hl(), result),
-            _ => unreachable!()
+            _ => unreachable!(),
         }
     }
 
     pub fn test_bit(&mut self, bit: u8, r: RegisterData) {
-        let val  = match r.register {
+        let val = match r.register {
             Register::A => self.registers.a,
             Register::B => self.registers.b,
             Register::C => self.registers.c,
@@ -1295,13 +1361,13 @@ impl Cpu {
             Register::H => self.registers.h,
             Register::L => self.registers.l,
             Register::HL => self.mmu.read_8(self.registers.get_hl()),
-            _ => unreachable!()
+            _ => unreachable!(),
         };
 
         let reg = &mut self.registers;
         let binary: u8 = 2u8.pow(bit as u32);
 
-        println!("binary: {:b}, val: {:b}", binary, val);
+        //println!("binary: {:b}, val: {:b}", binary, val);
 
         reg.unset_n();
         reg.set_h();
@@ -1311,7 +1377,6 @@ impl Cpu {
         } else {
             reg.set_z();
         }
-
     }
 
     pub fn reset_bit(&mut self, bit: u8, r: RegisterData) {
@@ -1324,7 +1389,7 @@ impl Cpu {
             Register::H => self.registers.h,
             Register::L => self.registers.l,
             Register::HL => self.mmu.read_8(self.registers.get_hl()),
-            _ => unreachable!()
+            _ => unreachable!(),
         };
 
         val = val & !(2u8.pow(bit as u32));
@@ -1338,7 +1403,7 @@ impl Cpu {
             Register::H => self.registers.h = val,
             Register::L => self.registers.l = val,
             Register::HL => self.mmu.write_8(self.registers.get_hl(), val),
-            _ => unreachable!()
+            _ => unreachable!(),
         }
     }
 
@@ -1352,7 +1417,7 @@ impl Cpu {
             Register::H => self.registers.h,
             Register::L => self.registers.l,
             Register::HL => self.mmu.read_8(self.registers.get_hl()),
-            _ => unreachable!()
+            _ => unreachable!(),
         };
 
         val = val | 2u8.pow(bit as u32);
@@ -1366,7 +1431,7 @@ impl Cpu {
             Register::H => self.registers.h = val,
             Register::L => self.registers.l = val,
             Register::HL => self.mmu.write_8(self.registers.get_hl(), val),
-            _ => unreachable!()
+            _ => unreachable!(),
         }
     }
 
@@ -1388,12 +1453,13 @@ impl Cpu {
             Interupt::LCD => 0x48,
             Interupt::Timer => 0x50,
             Interupt::Joypad => 0x60,
-            _ => unreachable!()
+            _ => unreachable!(),
         };
 
         self.push(RegisterData::from_reg(Register::PC));
         self.registers.pc = goto;
         
+        self.disable_interupts();
         20
     }
 
@@ -1405,78 +1471,81 @@ impl Cpu {
         let to = match r.register {
             Register::HL => self.registers.get_hl(),
             Register::Const16(x) => x,
-            _ => unreachable!()
+            _ => unreachable!("{}", r.register),
         };
 
         match c {
             Condition::Always => {
                 self.registers.pc = to;
-            },
-            Condition::Z if self.registers.get_n() => {
+            }
+            Condition::Z if self.registers.get_z() => {
                 self.registers.pc = to;
-            },
-            Condition::NZ if !self.registers.get_n() => {
+            }
+            Condition::NZ if !self.registers.get_z() => {
                 self.registers.pc = to;
-            },
+            }
             Condition::C if self.registers.get_c() => {
                 self.registers.pc = to;
-            },
+            }
             Condition::NC if !self.registers.get_c() => {
                 self.registers.pc = to;
-            },
-            _ => ()
+            }
+            _ => (),
         };
     }
 
     pub fn jump_relative(&mut self, c: Condition, by: RegisterData) {
-        let val = match by.register { Register::Const8(x) => x, _ => unreachable!() };
+        let val = match by.register {
+            Register::Const8(x) => x,
+            _ => unreachable!(),
+        };
         let to = ((self.registers.pc as u32 as i32) + (val as i8 as i32)) as u16;
 
         match c {
             Condition::Always => {
-                self.registers.pc = to; 
+                self.registers.pc = to;
             }
-            Condition::Z if self.registers.get_n() => {
-                self.registers.pc = to; 
-            },
-            Condition::NZ if !self.registers.get_n() => {
-                println!("jumped");
-                self.registers.pc = to; 
-            },
+            Condition::Z if self.registers.get_z() => {
+                self.registers.pc = to;
+            }
+            Condition::NZ if !self.registers.get_z() => {
+                self.registers.pc = to;
+            }
             Condition::C if self.registers.get_c() => {
-                self.registers.pc = to; 
-            },
+                self.registers.pc = to;
+            }
             Condition::NC if !self.registers.get_c() => {
-                self.registers.pc = to; 
-            },
-            _ => ()
+                self.registers.pc = to;
+            }
+            _ => (),
         }
     }
+    
 
     pub fn call(&mut self, c: Condition, r: RegisterData) {
         if let Register::Const16(to) = r.register {
             match c {
                 Condition::Always => {
                     self.push(RegisterData::from_reg(Register::PC));
-                    self.registers.pc = to; 
+                    self.registers.pc = to;
                 }
-                Condition::Z if self.registers.get_n() => {
+                Condition::Z if self.registers.get_z() => {
                     self.push(RegisterData::from_reg(Register::PC));
-                    self.registers.pc = to; 
-                },
-                Condition::NZ if !self.registers.get_n() => {
+                    self.registers.pc = to;
+                }
+                Condition::NZ if !self.registers.get_z() => {
                     self.push(RegisterData::from_reg(Register::PC));
-                    self.registers.pc = to; 
-                },
+                    self.registers.pc = to;
+                }
                 Condition::C if self.registers.get_c() => {
                     self.push(RegisterData::from_reg(Register::PC));
-                    self.registers.pc = to; 
-                },
+                    self.registers.pc = to;
+                }
                 Condition::NC if !self.registers.get_c() => {
                     self.push(RegisterData::from_reg(Register::PC));
-                    self.registers.pc = to; 
-                },
-                _ => ()
+                    self.registers.pc = to;
+                }
+                _ => (),
             }
         } else {
             unreachable!()
@@ -1488,19 +1557,19 @@ impl Cpu {
             Condition::Always => {
                 self.pop(RegisterData::from_reg(Register::PC));
             }
-            Condition::Z if self.registers.get_n() => {
+            Condition::Z if self.registers.get_z() => {
                 self.pop(RegisterData::from_reg(Register::PC));
-            },
-            Condition::NZ if !self.registers.get_n() => {
+            }
+            Condition::NZ if !self.registers.get_z() => {
                 self.pop(RegisterData::from_reg(Register::PC));
-            },
+            }
             Condition::C if self.registers.get_c() => {
                 self.pop(RegisterData::from_reg(Register::PC));
-            },
+            }
             Condition::NC if !self.registers.get_c() => {
                 self.pop(RegisterData::from_reg(Register::PC));
-            },
-            _ => ()
+            }
+            _ => (),
         }
     }
 
@@ -1513,7 +1582,4 @@ impl Cpu {
         self.push(RegisterData::from_reg(Register::PC));
         self.registers.pc = to;
     }
-
 }
-
-

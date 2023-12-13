@@ -46,15 +46,18 @@ impl Cartridge {
         }
 
         match self.fixed_rom[ROM_BANK_MODE_LOC] {
-            0 => self.controller = Box::new(self::default::NoMbc::default()),
+            0..=1 => self.controller = Box::new(self::default::NoMbc::default()),
             1..=3 => self.controller = Box::new(self::mbc1::Mbc1::default()),
             5..=6 => self.controller = Box::new(self::mbc2::Mbc2::default()),
             _ => unreachable!(),
         }
         
+        println!("heyee");
+        
         self.controller.load_rom(
             rom.iter().enumerate().filter(|(i, _)| *i >= ROM_BANK_SIZE).map(|(_, x)| *x).collect()
         );
+        println!("heyee");
     }
     
 }

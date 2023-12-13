@@ -214,14 +214,17 @@ impl Instruction {
             Self::LD(r1, _r2) => Self::LD(*r1, new),
             Self::LDH(r1, _r2) => Self::LDH(*r1, new),
             Self::ADD(r1, _r2) => Self::ADD(*r1, new),
-            Self::ADC(_r1, ) => Self::ADC(new),
-            Self::SBC(_r1, ) => Self::SBC(new),
-            Self::XOR(_r1, ) => Self::XOR(new),
-            Self::CP(_r1, ) => Self::CP(new),
+            Self::SUB(_r1) => Self::SUB(new),
+            Self::ADC(_r1) => Self::ADC(new),
+            Self::SBC(_r1) => Self::SBC(new),
+            Self::XOR(_r1) => Self::XOR(new),
+            Self::OR(_r1) => Self::OR(new),
+            Self::AND(_r1) => Self::AND(new),
+            Self::CP(_r1) => Self::CP(new),
             Self::JR(c, _r2) => Self::JR(*c, new),
             Self::JP(c, _r2) => Self::JP(*c, new),
             Self::CALL(c, _r2) => Self::CALL(*c, new),
-            _ => unreachable!()
+            _ => unreachable!("{}", self)
         }
     }
     
@@ -236,6 +239,7 @@ impl Instruction {
     
 }
 
+#[derive(enum_display::EnumDisplay)]
 pub enum Take {
     None,
     Eight,
@@ -375,7 +379,7 @@ impl Dissasembler {
                 "PUSH" => Instruction::PUSH(object["operands"][0].as_str().unwrap().into()),
                 "JP" => {
                     if object["opcode"].as_str().unwrap() == "0xe9" {
-                        Instruction::JP(Condition::Always, RegisterData::empty())
+                        Instruction::JP(Condition::Always, RegisterData::from_reg(Register::HL))
                     } else if Self::is_const(object["operands"][0].as_str().unwrap()).0 {
                         Instruction::JP(Condition::Always, RegisterData::empty())
                     } else {

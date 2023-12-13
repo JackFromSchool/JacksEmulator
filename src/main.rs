@@ -6,7 +6,7 @@ use JEmulator::gpu::ColorPixel;
 use std::time::Instant;
 use std::sync::{ Arc, Mutex };
 use std::sync::mpsc::channel;
-use std::thread;
+use std::thread::Builder;
 
 use winit::event_loop::EventLoop;
 use winit::window::WindowBuilder;
@@ -31,7 +31,6 @@ fn main() {
         WindowBuilder::new()
             .with_title("Jack's Emulator!")
             .with_inner_size(size)
-            .with_min_inner_size(size)
             .with_resizable(false)
             .build(&event_loop)
             .unwrap()
@@ -50,7 +49,10 @@ fn main() {
     let (render_sender, render_receiver) = channel::<()>();
     let (step_sender, step_receiver) = channel::<()>();
     
-    thread::spawn(move || {
+    Builder::new()
+        .name("Emulation Thread".to_string())
+        .stack_size(6000000)
+        .spawn(move || {
         let d = Dissasembler::new().unwrap();
         let mut cpu = Cpu::from_rom(include_bytes!("../roms/dmg_boot.bin").to_vec());
         
@@ -64,13 +66,13 @@ fn main() {
                     cpu.mmu.joypad.update_state(event);
                 }
                 
-                if step_receiver.try_recv().is_ok() {
-                    let tick_cycles = cpu.tick(&d);
+                //if step_receiver.try_recv().is_ok() {
+                    let (tick_cycles, ignore_master) = cpu.tick(&d);
                     cycles += tick_cycles as u64;
 
-                    let interupt_request = cpu.mmu.tick(tick_cycles, &pixel_array1);
+                    let interupt_request = cpu.mmu.tick(tick_cycles, ignore_master, &pixel_array1);
                     cycles += cpu.service_interupts(interupt_request) as u64;
-                }
+                //}
             }
 
             'here: loop {
@@ -82,7 +84,7 @@ fn main() {
             render_sender.send(()).unwrap();
             
         }
-    });
+    }).unwrap();
 
     event_loop.run(move |event, _, control_flow| {
 
@@ -96,9 +98,11 @@ fn main() {
                 if y < 144 {
                     let color = locked_array[y][x];
 
+                    /*
                     if color.r == 0x00 {
                         println!("Recieved black");
                     }
+                    */
                     
                     let rgba = [color.r, color.g, color.b, color.a];
 
