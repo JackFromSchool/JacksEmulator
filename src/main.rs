@@ -54,7 +54,7 @@ fn main() {
         .stack_size(6000000)
         .spawn(move || {
         let d = Dissasembler::new().unwrap();
-        let mut cpu = Cpu::from_rom(include_bytes!("../roms/dmg_boot.bin").to_vec());
+        let mut cpu = Cpu::from_rom(include_bytes!("../roms/04-op r,imm.gb").to_vec());
         
         loop {
             

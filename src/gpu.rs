@@ -100,6 +100,7 @@ pub struct GPU {
 }
 
 type MutexPixels = Arc<Mutex<[[ColorPixel; 160]; 144]>>;
+type TileArray = [[u8; 8]; 8];
 
 impl GPU {
     
@@ -208,122 +209,40 @@ impl GPU {
         let mut locked_array = shared_array.lock().unwrap();
         let control = self.lcd_control;
 
+        let window_tile_map_start = if self.lcd_control & 0x2 == 0x2 {
+            if self.lcd_control & 0x64 == 0x64 {
+                Some(0x9C00)
+            } else {
+                Some(0x9800)
+            }
+        } else {
+            None
+        };
+
+        let bg_tile_map_start = if self.lcd_control & 0x8 == 0x8 {
+            0x9C00
+        } else {
+            0x9800
+        };
+        
         let sy = self.scroll_y;
         let sx = self.scroll_x;
         let wy = self.window_y;
         let wx = self.window_x.wrapping_sub(7);
         
-        let (tile_data_start, signed) = if (control & 0b0001_0000) == 0b0001_0000 {
-            (0x8800, true) 
-        } else {
-            (0x8000, false) 
-        };
+        let tile_y = sy.wrapping_add(self.current_scanline) / 8;
+        
+        for index in 0..160 {
+            let tile_x = sx.wrapping_add(index) / 8;
 
+            let current_tile: u16 = (tile_y as u16)*32 + (tile_x as u16);
 
-        let mut window = false;
+            if tile_y <= wy && tile_x <= wx && 
 
-        if (control & 0b0010_0000) == 0b0010_0000 {
-            if wy <= self.current_scanline {
-                window = true;
-            }
-        }
+            inner_tile_y = sy.wrapping_add(self.current_scanline) % 8;
+            inner_tile_x = sx.wrapping_add(index) % 8;
 
-        let bg_layout_start = if !window {
-            if (control & 0b0000_1000) == 0b0000_1000 {
-                0x9C00
-            } else {
-                0x9800
-            }
-        } else {
-            if (control & 0b0100_0000) == 0b0100_0000 {
-                0x9C00
-            } else {
-                0x9800
-            }
-        };
-
-
-        let y_pos = if !window {
-            sy.wrapping_add(self.current_scanline)
-        } else {
-            self.current_scanline - wy
-        };
-
-        let tile_row: u16 = ((y_pos as u16)/8)*32;
-
-        for pixel in 0..160 {
-            let mut x_pos = pixel+self.scroll_x;
-
-            if window {
-                if pixel >= wx {
-                    x_pos = pixel - wx
-                }
-            }
-
-            let tile_col = x_pos/8;
-
-            let tile_address = bg_layout_start as u16 + tile_row as u16 + tile_col as u16;
             
-            let tile_num = self.vram[(tile_address - VRAM_START) as usize] as u16;
-
-            let mut tile_location: u16 = tile_data_start;
-
-            if signed {
-                tile_location += tile_num * 16;
-            } else {
-                tile_location += (tile_num + 128) * 16;
-            }
-
-            let mut line: u16 = (y_pos as u16) % 8;
-            line *= 2;
-            let data1 = self.vram[((tile_location + line) - VRAM_START) as usize];
-            let data2 = self.vram[((tile_location + line + 1) - VRAM_START) as usize];
-
-            let mut color_bit = (x_pos as i32) % 8;
-            color_bit -= 7;
-            color_bit *= -1;
-
-            let mut color_num = Self::get_bit_val(data2, color_bit as u32);
-            color_num <<= 1;
-            color_num |= Self::get_bit_val(data1, color_bit as u32);
-            
-            let color = match color_num {
-                0 => self.bg_palatte & 0b0000_0011,
-                1 => (self.bg_palatte & 0b0000_1100) >> 2,
-                2 => (self.bg_palatte & 0b0011_0000) >> 4,
-                3 => (self.bg_palatte & 0b1100_0000) >> 6,
-                _ => unreachable!()
-            };
-
-            let color_pixel = match color {
-                0 => ColorPixel {
-                    r: 155,
-                    g: 188,
-                    b: 15,
-                    a: 255,
-                },
-                1 => ColorPixel {
-                    r: 139,
-                    g: 172,
-                    b: 15,
-                    a: 255,
-                },
-                2 => ColorPixel {
-                    r: 48,
-                    g: 98,
-                    b: 48,
-                    a: 255
-                },
-                3 => ColorPixel {
-                    r: 15,
-                    g: 56,
-                    b: 15,
-                    a: 255
-                },
-                _ => unreachable!()
-            };
-
-            locked_array[self.current_scanline as usize][pixel as usize] = color_pixel;
         }
 
     }
@@ -338,6 +257,23 @@ impl GPU {
         } else {
             0
         }
+    }
+
+    fn get_tile(&self, tile_start: u16) -> TileArray {
+        let mut ret_array: TileArray = [[0; 8]; 8];
+        
+        for i in (0..16).filter(|x| x % 2 == 0) {
+            let first_byte = self.vram[(tile_start+i) as usize];
+            let second_byte = self.vram[(tile_start+i) as usize];
+
+            for j in 0..8 {
+                ret_array[(i/2) as usize][7-j] = 
+                    (first_byte & 2u8.pow(j as u32)) |
+                    ((second_byte & 2u8.pow(j as u32)) << 1);
+            }
+        }
+
+        ret_array
     }
     
 }

@@ -57,7 +57,7 @@ impl Cpu {
         }
         
         let pc = self.registers.pc;
-        println!("{}", pc);
+        //println!("{}", pc);
 
         /*
         let str = format!("A:{:02x} F:{:02x} B:{:02x} C:{:02x} D:{:02x} E:{:02x} H:{:02x} L:{:02x} SP:{:04x} PC:{:04x} PCMEM:{:02x},{:02x},{:02x},{:02x}\n",
