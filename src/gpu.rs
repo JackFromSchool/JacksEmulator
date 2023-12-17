@@ -207,7 +207,6 @@ impl GPU {
 
     fn render_tiles(&mut self, shared_array: &MutexPixels) {
         let mut locked_array = shared_array.lock().unwrap();
-        let control = self.lcd_control;
 
         let window_tile_map_start = if self.lcd_control & 0x2 == 0x2 {
             if self.lcd_control & 0x64 == 0x64 {
@@ -224,6 +223,12 @@ impl GPU {
         } else {
             0x9800
         };
+
+        let tile_data_start: u16 = if self.lcd_control & 0x10 == 0x10 {
+            0x8000
+        } else {
+            0x8800
+        };
         
         let sy = self.scroll_y;
         let sx = self.scroll_x;
@@ -236,13 +241,44 @@ impl GPU {
             let tile_x = sx.wrapping_add(index) / 8;
 
             let current_tile: u16 = (tile_y as u16)*32 + (tile_x as u16);
-
-            if tile_y <= wy && tile_x <= wx && 
-
-            inner_tile_y = sy.wrapping_add(self.current_scanline) % 8;
-            inner_tile_x = sx.wrapping_add(index) % 8;
-
             
+            // TODO: Update to account for scrolling
+            let tile_identifier = if wx >= sx.wrapping_add(index) && wy >= sy.wrapping_add(self.current_scanline) && window_tile_map_start.is_some() {
+                self.vram[((window_tile_map_start.unwrap()+current_tile)-VRAM_START) as usize]
+            } else {
+                self.vram[((bg_tile_map_start+current_tile)-VRAM_START) as usize]
+            };
+
+            let tile_start = if tile_data_start == 0x8000 {
+                tile_data_start+(tile_identifier as u16)*16
+            } else {
+                tile_data_start+(128u8.wrapping_add_signed(tile_identifier as i8) as u16)*16
+            };
+
+            let inner_tile_y = sy.wrapping_add(self.current_scanline) % 8;
+            let inner_tile_x = sx.wrapping_add(index) % 8;
+
+            let tile = self.get_tile(tile_start);
+            
+            let pixel = tile[inner_tile_y as usize][inner_tile_x as usize];
+
+            let color = match pixel {
+                0 => (self.bg_palatte & 0b0000_0011),
+                1 => (self.bg_palatte & 0b0000_1100) >> 2,
+                2 => (self.bg_palatte & 0b0011_0000) >> 4,
+                3 => (self.bg_palatte & 0b1100_0000) >> 6,
+                _ => unreachable!()
+            };
+
+            let color_pixel = match color {
+                0 => ColorPixel { r: 0xd0, g: 0xd0, b: 0x58, a: 255 },
+                1 => ColorPixel { r: 0xa0, g: 0xa8, b: 0x40, a: 255 },
+                2 => ColorPixel { r: 0x70, g: 0x80, b: 0x28, a: 255 },
+                3 => ColorPixel { r: 0x40, g: 0x50, b: 0x10, a: 255 },
+                _ => unreachable!()
+            };
+
+            locked_array[self.current_scanline as usize][index as usize] = color_pixel;
         }
 
     }
@@ -263,13 +299,13 @@ impl GPU {
         let mut ret_array: TileArray = [[0; 8]; 8];
         
         for i in (0..16).filter(|x| x % 2 == 0) {
-            let first_byte = self.vram[(tile_start+i) as usize];
-            let second_byte = self.vram[(tile_start+i) as usize];
+            let first_byte = self.vram[((tile_start+i) - VRAM_START) as usize];
+            let second_byte = self.vram[((tile_start+i) - VRAM_START) as usize];
 
             for j in 0..8 {
                 ret_array[(i/2) as usize][7-j] = 
-                    (first_byte & 2u8.pow(j as u32)) |
-                    ((second_byte & 2u8.pow(j as u32)) << 1);
+                    ((first_byte & 2u8.pow(j as u32)) >> j) |
+                    (((second_byte & 2u8.pow(j as u32)) >> j) << 1);
             }
         }
 
