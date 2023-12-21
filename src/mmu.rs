@@ -140,6 +140,10 @@ impl MMU {
     pub fn write_8(&mut self, index: u16, value: u8) {
         use crate::interupts::IF_LOC;
 
+        if index == 0xFF50 && self.cartridge.booting {
+            self.cartridge.booting = false;
+        }
+
         let mut io = false;
         match index {
             ROM_START..=ROM_END => self.cartridge.handle_write(index, value),
@@ -187,7 +191,6 @@ impl MMU {
     pub fn read_8(&self, index: u16) -> u8 {
         use crate::interupts::IF_LOC;
         use crate::joypad::JOYPAD_REG_LOC;
-        // TODO: Add a case that only allows writing to hram during dma transfer
         
         match index {
             ROM_START..=ROM_END => self.cartridge.handle_read(index),

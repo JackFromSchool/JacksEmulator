@@ -7,6 +7,7 @@ use std::time::Instant;
 use std::sync::{ Arc, Mutex };
 use std::sync::mpsc::channel;
 use std::thread::Builder;
+use std::fs::read;
 
 use winit::event_loop::EventLoop;
 use winit::window::WindowBuilder;
@@ -47,16 +48,19 @@ fn main() {
     
     let (event_sender, event_receiver) = channel::<ButtonEventWrapper>();
     let (render_sender, render_receiver) = channel::<()>();
-    let (step_sender, step_receiver) = channel::<()>();
+    let (rom_sender, rom_receiver) = channel::<Vec<u8>>();
     
     Builder::new()
         .name("Emulation Thread".to_string())
-        .stack_size(6000000)
         .spawn(move || {
         let d = Dissasembler::new().unwrap();
-        let mut cpu = Cpu::from_rom(include_bytes!("../roms/04-op r,imm.gb").to_vec());
+        let bytes = rom_receiver.recv().unwrap();
+        let mut cpu = Cpu::from_rom(bytes);
         
         loop {
+            if let Ok(bytes) = rom_receiver.try_recv() {
+                cpu = Cpu::from_rom(bytes);
+            }
             
             let start = Instant::now();
             let mut cycles = 0;
@@ -66,13 +70,11 @@ fn main() {
                     cpu.mmu.joypad.update_state(event);
                 }
                 
-                //if step_receiver.try_recv().is_ok() {
-                    let (tick_cycles, ignore_master) = cpu.tick(&d);
-                    cycles += tick_cycles as u64;
+                let (tick_cycles, ignore_master) = cpu.tick(&d);
+                cycles += tick_cycles as u64;
 
-                    let interupt_request = cpu.mmu.tick(tick_cycles, ignore_master, &pixel_array1);
-                    cycles += cpu.service_interupts(interupt_request) as u64;
-                //}
+                let interupt_request = cpu.mmu.tick(tick_cycles, ignore_master, &pixel_array1);
+                cycles += cpu.service_interupts(interupt_request) as u64;
             }
 
             'here: loop {
@@ -97,12 +99,6 @@ fn main() {
                 
                 if y < 144 {
                     let color = locked_array[y][x];
-
-                    /*
-                    if color.r == 0x00 {
-                        println!("Recieved black");
-                    }
-                    */
                     
                     let rgba = [color.r, color.g, color.b, color.a];
 
@@ -130,16 +126,18 @@ fn main() {
                                 VirtualKeyCode::Left => ButtonEvent::Left,
                                 VirtualKeyCode::Up => ButtonEvent::Up,
                                 VirtualKeyCode::Down => ButtonEvent::Down,
-                                VirtualKeyCode::N => {
-                                    step_sender.send(()).unwrap();
-                                    ButtonEvent::None
-                                }
                                 _ => ButtonEvent::None,
                             };
                             
                             if !event.is_none() {
                                 event_sender.send(ButtonEventWrapper { event, new_state: input.state }).unwrap();
                             }
+                        }
+                    },
+                    WindowEvent::DroppedFile(path) => {
+                        let droppped_file = read(path);
+                        if let Ok(bytes) = droppped_file {
+                            rom_sender.send(bytes).unwrap();
                         }
                     }
                     _ => ()

@@ -18,15 +18,26 @@ pub struct Cartridge {
     // Memory Related State
     /// Fixed ROM Memory; No Banking
     fixed_rom: [u8; ROM_BANK_SIZE],
+    boot_rom: [u8; 0x100],
     /// ROM Bank Controler
     controller: Box<dyn MemController>,
+
+    pub booting: bool,
 }
 
 impl std::default::Default for Cartridge {
     fn default() -> Self {
+        let bytes = include_bytes!("../roms/dmg_boot.bin");
+        let mut boot_rom = [0; 0x100];
+        for (i, byte) in bytes.iter().enumerate() {
+            boot_rom[i] = *byte;
+        }
+        
         Self {
             fixed_rom: [0; ROM_BANK_SIZE],
+            boot_rom,
             controller: Box::new(default::NoMbc::default()),
+            booting: true,
         }
     }
     
@@ -52,12 +63,9 @@ impl Cartridge {
             _ => unreachable!(),
         }
         
-        println!("heyee");
-        
         self.controller.load_rom(
             rom.iter().enumerate().filter(|(i, _)| *i >= ROM_BANK_SIZE).map(|(_, x)| *x).collect()
         );
-        println!("heyee");
     }
     
 }
@@ -73,6 +81,10 @@ impl crate::mmu::Memory for Cartridge {
     }
     
     fn handle_read(&self, index: u16) -> u8 {
+        if (0..0x100).contains(&index) && self.booting {
+            return self.boot_rom[index as usize];
+        }
+        
         if (0..ROM_BANK_SIZE).contains(&(index as usize)) {
             self.fixed_rom[index as usize]
         } else {
